@@ -52,7 +52,9 @@ namespace Polya {
         }
         public static Mark Worksheet(string path,PointF center) {
             if(new FileInfo(path).Length>24L*1024*1024) throw new FormatException("Выберите изображение размером до 24 МБ.");
-            using(var file=File.OpenRead(path))
+            using(var file=File.OpenRead(path))return Worksheet(file,center,Path.GetFileNameWithoutExtension(path));
+        }
+        public static Mark Worksheet(Stream file,PointF center,string name) {
             using(var source=Image.FromStream(file,true,true)) {
                 if((long)source.Width*source.Height>36000000) throw new FormatException("Изображение слишком большое. Уменьшите его до 36 мегапикселей.");
                 double scale=Math.Min(1,2200.0/Math.Max(source.Width,source.Height));
@@ -65,7 +67,7 @@ namespace Polya {
                     if(bytes.Length>12*1024*1024) {bytes.SetLength(0);bytes.Position=0;resized.Save(bytes,ImageFormat.Jpeg);}
                     float boardScale=Math.Min(1,660f/Math.Max(resized.Width,resized.Height));
                     var w=resized.Width*boardScale;var h=resized.Height*boardScale;
-                    return Mark.Make("image",center.X-w/2,center.Y-h/2,w,h,Path.GetFileNameWithoutExtension(path),
+                    return Mark.Make("image",center.X-w/2,center.Y-h/2,w,h,name,
                         Convert.ToBase64String(bytes.ToArray()));
                 }
             }
@@ -204,8 +206,7 @@ namespace Polya {
         void AddTask() {
             var c=surface.Center();
             var item=LessonArt.Task(c.X-245,c.Y-125,490,250,"Задание","","");
-            var edited=EditTask(item);
-            if(edited!=null){surface.Add(edited);ChooseTool("select");}
+            EditTask(item,edited=>{if(edited!=null){surface.Add(edited);ChooseTool("select");}});
         }
         void AddWorksheet() {
             var file=FileSheet.PickImage(this);
@@ -213,23 +214,22 @@ namespace Polya {
             try {surface.Add(LessonArt.Worksheet(file,surface.Center()));ChooseTool("select");}
             catch(Exception ex) {Prompts.Alert(this,"Изображение не открывается",ex.Message);}
         }
-        Mark EditTask(Mark item) {
+        void EditTask(Mark item,Action<Mark> done) {
             var next=item.Copy();
-            using(var sheet=new Sheet("Задание","Ученик увидит ответ после раскрытия",546,529)) {
-                sheet.Caption("Заголовок",22,96,502);var title=sheet.Field(item.Title,22,121,502);
-                sheet.Caption("Условие",22,153,502);var question=sheet.Body(item.Text,22,178,502,121);
-                sheet.Caption("Ответ или подсказка",22,306,502);var answer=sheet.Body(item.Answer,22,332,502,124);
-                sheet.Footer("На доску",()=>{
-                    if(String.IsNullOrWhiteSpace(question.Text)||String.IsNullOrWhiteSpace(answer.Text)) return sheet.Error("Введите условие и ответ.");
-                    next.Title=String.IsNullOrWhiteSpace(title.Text)?"Задание":title.Text.Trim();
-                    next.Text=question.Text.Trim();next.Answer=answer.Text.Trim();
-                    var measure=Mark.Make("text",0,0,next.W,100,"",next.Text);TextLayout.Fit(measure);
-                    var prompt=measure.H;measure=Mark.Make("text",0,0,next.W,100,"",next.Answer);TextLayout.Fit(measure);
-                    next.H=Math.Max(250,Math.Max(prompt,measure.H)*2+85);
-                    return true;
-                });
-                return sheet.ShowDialog(this)==DialogResult.OK?next:null;
-            }
+            var sheet=new Sheet("Задание","Ученик увидит ответ после раскрытия",546,529);
+            sheet.Caption("Заголовок",22,96,502);var title=sheet.Field(item.Title,22,121,502);
+            sheet.Caption("Условие",22,153,502);var question=sheet.Body(item.Text,22,178,502,121);
+            sheet.Caption("Ответ или подсказка",22,306,502);var answer=sheet.Body(item.Answer,22,332,502,124);
+            sheet.Footer("На доску",()=>{
+                if(String.IsNullOrWhiteSpace(question.Text)||String.IsNullOrWhiteSpace(answer.Text)) return sheet.Error("Введите условие и ответ.");
+                next.Title=String.IsNullOrWhiteSpace(title.Text)?"Задание":title.Text.Trim();
+                next.Text=question.Text.Trim();next.Answer=answer.Text.Trim();
+                var measure=Mark.Make("text",0,0,next.W,100,"",next.Text);TextLayout.Fit(measure);
+                var prompt=measure.H;measure=Mark.Make("text",0,0,next.W,100,"",next.Answer);TextLayout.Fit(measure);
+                next.H=Math.Max(250,Math.Max(prompt,measure.H)*2+85);
+                return true;
+            });
+            sheet.OnBoard(this,result=>done(result==DialogResult.OK?next:null));
         }
         void ToggleTask(Mark item) {
             var updated=item.Copy();updated.Revealed=!item.Revealed;surface.Replace(item,updated);
@@ -238,27 +238,27 @@ namespace Polya {
         void PickFrame() {
             var frames=Frames();
             if(frames.Length==0){Prompts.Alert(this,"Кадров пока нет","Добавьте кадр или создайте шаблон урока.");return;}
-            using(var sheet=new Sheet("Кадры урока","Выберите, какую часть доски показать",470,392)) {
-                var list=sheet.Put(new ListBox{BorderStyle=BorderStyle.None,DrawMode=DrawMode.OwnerDrawFixed,ItemHeight=37,IntegralHeight=false},22,101,426,216);
-                list.Items.AddRange(frames.Select(m=>m.Title).ToArray());
-                list.DrawItem+=(s,e)=>{
-                    if(e.Index<0)return;
-                    Art.Prepare(e.Graphics);var r=new RectangleF(e.Bounds.X+1,e.Bounds.Y+2,e.Bounds.Width-3,e.Bounds.Height-4);
-                    bool selected=(e.State&DrawItemState.Selected)!=0;
-                    Art.Round(e.Graphics,r,8,selected?Art.Pale:Art.C("#F7F6FA"));
-                    Art.Icon(e.Graphics,"frame",r.X+8,r.Y+7,19,Art.Purple);
-                    Art.Label(e.Graphics,frames[e.Index].Title,r.X+34,r.Y,r.Width-44,r.Height,14,Art.Ink,selected);
-                };
-                list.SelectedIndex=0;list.DoubleClick+=(s,e)=>sheet.AcceptButton.PerformClick();
-                sheet.Footer("Показать",()=>list.SelectedIndex>=0);
-                if(sheet.ShowDialog(this)==DialogResult.OK) {FocusFrame(frames[list.SelectedIndex]);ViewChanged();}
-            }
+            var sheet=new Sheet("Кадры урока","Выберите, какую часть доски показать",470,392);
+            var list=sheet.Put(new ListBox{BorderStyle=BorderStyle.None,DrawMode=DrawMode.OwnerDrawFixed,ItemHeight=37,IntegralHeight=false},22,101,426,216);
+            list.Items.AddRange(frames.Select(m=>m.Title).ToArray());
+            list.DrawItem+=(s,e)=>{
+                if(e.Index<0)return;
+                Art.Prepare(e.Graphics);var r=new RectangleF(e.Bounds.X+1,e.Bounds.Y+2,e.Bounds.Width-3,e.Bounds.Height-4);
+                bool selected=(e.State&DrawItemState.Selected)!=0;
+                Art.Round(e.Graphics,r,8,selected?Art.Pale:Art.C("#F7F6FA"));
+                Art.Icon(e.Graphics,"frame",r.X+8,r.Y+7,19,Art.Purple);
+                Art.Label(e.Graphics,frames[e.Index].Title,r.X+34,r.Y,r.Width-44,r.Height,14,Art.Ink,selected);
+            };
+            list.SelectedIndex=0;list.DoubleClick+=(s,e)=>sheet.AcceptButton.PerformClick();
+            sheet.Footer("Показать",()=>list.SelectedIndex>=0);
+            sheet.OnBoard(this,result=>{if(result==DialogResult.OK){FocusFrame(frames[list.SelectedIndex]);ViewChanged();}});
         }
         void FocusFrame(Mark frame) {
             StopZoom();
             surface.Focus(frame.Bounds, presenting?54:100,presenting?100:146);
         }
         void StartPresentation() {
+            CloseCanvasPanel();
             if(presenting)return;
             lessonFrames=Frames();
             virtualSlide=lessonFrames.Length==0;
@@ -322,23 +322,22 @@ namespace Polya {
             var next=graph.Copy();next.Parameter=Math.Max(-10,Math.Min(10,value));surface.Replace(graph,next);
         }
         void EditTimer() {
-            using(var sheet=new Sheet("Таймер урока","Введите длительность или выберите готовое время",470,286)) {
-                sheet.Caption("Минуты",22,96,400);
-                var time=sheet.Field("5",22,120,426);
-                int[] presets={1,3,5,10};
-                for(int i=0;i<presets.Length;i++) {
-                    int min=presets[i];
-                    sheet.Action(min+" мин",22+i*108,163,100,()=>time.Text=min.ToString());
-                }
-                sheet.Footer("Старт",()=>{
-                    double minutes;
-                    if(!Double.TryParse(time.Text.Replace(',','.'),NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out minutes)||minutes<1.0/60||minutes>180)
-                        return sheet.Error("Введите время от одной секунды до 180 минут.");
-                    timerLeft=TimeSpan.FromMinutes(minutes);countdown.Restart();timerActive=true;timerAlert=false;lessonTimer.Start();
-                    return true;
-                });
-                sheet.ShowDialog(this);Invalidate();
+            var sheet=new Sheet("Таймер урока","Введите длительность или выберите готовое время",470,286);
+            sheet.Caption("Минуты",22,96,400);
+            var time=sheet.Field("5",22,120,426);
+            int[] presets={1,3,5,10};
+            for(int i=0;i<presets.Length;i++) {
+                int min=presets[i];
+                sheet.Action(min+" мин",22+i*108,163,100,()=>time.Text=min.ToString());
             }
+            sheet.Footer("Старт",()=>{
+                double minutes;
+                if(!Double.TryParse(time.Text.Replace(',','.'),NumberStyles.AllowDecimalPoint,CultureInfo.InvariantCulture,out minutes)||minutes<1.0/60||minutes>180)
+                    return sheet.Error("Введите время от одной секунды до 180 минут.");
+                timerLeft=TimeSpan.FromMinutes(minutes);countdown.Restart();timerActive=true;timerAlert=false;lessonTimer.Start();
+                return true;
+            });
+            sheet.OnBoard(this,result=>Invalidate());
         }
         void DrawLessonClock(Graphics g) {
             if(!timerActive)return;

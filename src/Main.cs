@@ -50,7 +50,7 @@ namespace Polya {
             }
             surface.Bind(doc.Boards[doc.Active]);
             surface.UseRaster();
-            surface.Changed+=()=>{ dirty=true; RecordSession(); Invalidate(); };
+            surface.Changed+=()=>{ lastErasure=false;dirty=true; RecordSession(); Invalidate(); };
             surface.EditMark+=EditMark;
             surface.PreviewLink+=Preview;
             surface.RevealTask+=ToggleTask;
@@ -102,6 +102,7 @@ namespace Polya {
             recoveryTimer.Stop(); recoveryTimer.Start();
         }
         protected override void OnFormClosing(FormClosingEventArgs e) {
+            FinishText(true);
             if(presenting)EndPresentation();
             if(!CheckUnsaved()) {e.Cancel=true;return;}
             if(recoveryAllowed&&recoveryTimer.Enabled) {
@@ -118,7 +119,7 @@ namespace Polya {
             base.OnFormClosing(e);
         }
         protected override void Dispose(bool disposing) {
-            if(disposing) { surface.Cancel();surface.ReleaseRaster();recoveryTimer.Dispose();fanTimer.Dispose();zoomTimer.Dispose();renderTimer.Dispose();lessonTimer.Dispose();tips.Dispose(); }
+            if(disposing) { CloseCanvasPanel();surface.Cancel();surface.ReleaseRaster();recoveryTimer.Dispose();fanTimer.Dispose();zoomTimer.Dispose();renderTimer.Dispose();lessonTimer.Dispose();tips.Dispose(); }
             base.Dispose(disposing);
         }
         RectangleF R(float x,float y,float w,float h) { return new RectangleF(x,y,w,h); }
@@ -140,7 +141,7 @@ namespace Polya {
             }
         }
         protected override void OnPaint(PaintEventArgs e) {
-            LayoutUi(e.Graphics);
+            LayoutUi(e.Graphics);PositionCanvasPanel();
             var g=e.Graphics; g.SetClip(e.ClipRectangle);g.ScaleTransform(scale,scale); Art.Prepare(g);
             hits.Clear();
             if(page!=ScreenPage.Board) { DrawLibrary(g); return; }
@@ -193,7 +194,12 @@ namespace Polya {
         void StopZoom() {zoomTimer.Stop();surface.AnimatingZoom=false;}
         void ChooseTool(string tool) {
             if(tool=="undo"||tool=="redo") surface.Undo(tool=="redo");
-            else { popup=null; surface.Tool=tool; if(tool!="select") surface.ClearSelection(); }
+            else {
+                popup=null;
+                if(surface.Erasing) {surface.Cancel();Capture=false;}
+                else if(tool==surface.Tool&&Surface.IsEraser(tool)&&lastErasure) {surface.Undo(false);lastErasure=false;Invalidate();return;}
+                lastErasure=false;surface.Tool=tool;if(tool!="select") surface.ClearSelection();
+            }
             UpdateCursor(); Invalidate();
         }
         void ToggleTidy() {surface.Tidy=!surface.Tidy; MarkSettings();}
@@ -211,10 +217,12 @@ namespace Polya {
             if(onBoard&&surface.Tool=="select"&&DiagramEdit.HandleAt(surface.Selected,surface.World(pointer),9/surface.Board.Zoom)>=0) {
                 Cursor=Cursors.SizeAll;return;
             }
-            Cursor=onBoard&&surface.Tool!="select"?Cursors.Cross:Cursors.Default;
+            Cursor=onBoard&&surface.Tool!="select"&&!Surface.IsEraser(surface.Tool)?Cursors.Cross:Cursors.Default;
         }
         protected override void OnMouseDown(MouseEventArgs e) {
             base.OnMouseDown(e);
+            FinishText(true);
+            Focus();
             var at=Logical(e.Location); var control=At(at);
             if(e.Button==MouseButtons.Left&&control!=null&&e.Clicks==1) {control.Action();Invalidate();return;}
             if(page!=ScreenPage.Board) return;
@@ -245,7 +253,7 @@ namespace Polya {
                 if(target!=null) Dirty(RectangleF.Inflate(target.Rect,2,2));
                 if(fan) Dirty(R(screenW-270,screenH-345,270,345));
             }
-            if(page==ScreenPage.Board&&surface.Tool=="eraser") {
+            if(page==ScreenPage.Board&&Surface.IsEraser(surface.Tool)) {
                 Dirty(R(previous.X-12,previous.Y-12,24,24));
                 Dirty(R(pointer.X-12,pointer.Y-12,24,24));
             }
@@ -253,7 +261,9 @@ namespace Polya {
         protected override void OnMouseUp(MouseEventArgs e) {
             base.OnMouseUp(e);
             if(surface.Dragging) {
+                bool erasing=surface.Erasing;int before=surface.Revision;
                 surface.OnUp(Logical(e.Location),(ModifierKeys&Keys.Shift)!=0);
+                lastErasure=erasing&&before!=surface.Revision;
                 Capture=false; UpdateCursor(); ViewChanged();
             }
         }
@@ -271,6 +281,7 @@ namespace Polya {
         }
         protected override void OnKeyDown(KeyEventArgs e) {
             base.OnKeyDown(e);
+            if(textInput!=null&&textInput.Focused||canvasPanel!=null&&canvasPanel.ContainsFocus)return;
             if(presenting) {
                 if(e.KeyCode==Keys.Escape) EndPresentation();
                 else if(e.KeyCode==Keys.Right||e.KeyCode==Keys.Space||e.KeyCode==Keys.PageDown) StepLesson(1);
@@ -293,9 +304,10 @@ namespace Polya {
                     case Keys.N: NewNotebook(); break;
                     case Keys.D:
                         DuplicateSelected();break;
+                    case Keys.V: if(!PasteLink())return;break;
                     default:return;
                 }
-            } else switch(e.KeyCode) {
+            } else switch(e.KeyCode>=Keys.NumPad0&&e.KeyCode<=Keys.NumPad9?(Keys)((int)Keys.D0+(int)e.KeyCode-(int)Keys.NumPad0):e.KeyCode) {
                 case Keys.Space: surface.Space=true; UpdateCursor(); break;
                 case Keys.Delete: if(!surface.Dragging) surface.Delete();break;
                 case Keys.Escape: surface.Cancel(); surface.ClearSelection(); Capture=false; ChooseTool("select"); break;
@@ -303,7 +315,7 @@ namespace Polya {
                 case Keys.R: ChooseTool("rect");break; case Keys.O:ChooseTool("ellipse");break; case Keys.A:ChooseTool("arrow");break;
                 case Keys.I: case Keys.L: ChooseTool("line");break; case Keys.T:ChooseTool("text");break; case Keys.N:ChooseTool("note");break;
                 case Keys.D: ChooseTool("diamond");break;
-                case Keys.K: ChooseTool("link");break; case Keys.E:ChooseTool("eraser");break;
+                case Keys.K: ChooseTool("link");break; case Keys.E:ChooseTool(e.Shift?"pixel":"eraser");break;
                 case Keys.Q: surface.KeepTool=!surface.KeepTool;break;
                 case Keys.D1: ChooseTool("select");break;
                 case Keys.D2: ChooseTool("rect");break;
@@ -313,6 +325,7 @@ namespace Polya {
                 case Keys.D6: ChooseTool("line");break;
                 case Keys.D7: ChooseTool("pen");break;
                 case Keys.D8: ChooseTool("text");break;
+                case Keys.D9: ChooseTool("note");break;
                 case Keys.F1: Help();break; case Keys.F2: RenameBoard();break; case Keys.D0:surface.Fit();ViewChanged();break;
                 case Keys.F5: StartPresentation();break;
                 case Keys.Enter:
@@ -327,8 +340,9 @@ namespace Polya {
             e.SuppressKeyPress=true; Invalidate();
         }
         protected override void OnKeyUp(KeyEventArgs e) {base.OnKeyUp(e);if(e.KeyCode==Keys.Space) {surface.Space=false; UpdateCursor();}}
-        protected override void OnDeactivate(EventArgs e) {base.OnDeactivate(e);surface.Space=false;}
+        protected override void OnDeactivate(EventArgs e) {base.OnDeactivate(e);surface.Space=false;EndPen();}
         void SelectBoard(int index) {
+            CloseCanvasPanel();
             if(index==doc.Active) return;
             StopZoom();
             doc.Active=index; surface.Bind(doc.Boards[index]); ChooseTool("select"); ViewChanged();
@@ -356,39 +370,62 @@ namespace Polya {
         }
         void EditMark(Mark mark) {
             if(mark==null) return;
-            bool added=!surface.Board.Marks.Contains(mark);
-            Mark next;
+            var board=surface.Board;
+            bool existing=board.Marks.Contains(mark);
+            Action<Mark> done=next=>{
+                if(surface.Board!=board||existing&&!board.Marks.Contains(mark))return;
+                CommitEditedMark(mark,next);
+            };
             switch(mark.Kind) {
-                case "diagram":next=DiagramEdit.Properties(this,mark);break;
-                case "task":next=EditTask(mark);break;
+                case "diagram":DiagramEdit.Properties(this,mark,done);return;
+                case "task":EditTask(mark,done);return;
                 case "frame":
                     string name;int unused;
                     if(!Dialogs.BoardName(this,"Название кадра",mark.Title,null,out name,out unused))return;
-                    next=mark.Copy();next.Title=name;break;
-                case "graph":next=Dialogs.Graph(this,mark);break;
-                case "trig":next=Dialogs.Trig(this,mark);break;
-                case "heading":case "text":case "note":case "link":next=Dialogs.Edit(this,mark);break;
+                    var frame=mark.Copy();frame.Title=name;done(frame);return;
+                case "graph":Dialogs.Graph(this,mark,done);return;
+                case "trig":Dialogs.Trig(this,mark,done);return;
+                case "text":EditTextOnCanvas(mark);return;
+                case "heading":case "note":case "link":Dialogs.Edit(this,mark,done);return;
                 default:return;
             }
+        }
+        void CommitEditedMark(Mark mark,Mark next) {
             if(next==null) return;
+            bool added=!surface.Board.Marks.Contains(mark);
             if(next.Kind=="text"||next.Kind=="note") TextLayout.Fit(next);
             if(added) {surface.Add(next);if(!surface.KeepTool||mark.Kind=="graph"||mark.Kind=="trig") surface.Tool="select";}
             else surface.Replace(mark,next);
+            if(added&&next.Kind=="link")Preview(next);
             Invalidate();
         }
         void NewWidget(string kind) {
             var center=surface.Center();
             var graph=kind=="graph";
-            EditMark(Mark.Make(kind,center.X-215,center.Y-155,430,graph?310:346,graph?"График функции":"Тригонометрическая окружность",graph?"sin(x)":""));
+            var widget=Mark.Make(kind,center.X-215,center.Y-155,430,graph?310:346,graph?"График функции":"Тригонометрическая окружность",graph?"sin(x)":"");
+            surface.Add(widget);ChooseTool("select");
+            if(graph) EditMark(widget);
         }
-        void Calculator() { using(var calc=new CalculatorWindow()) calc.ShowDialog(this); }
+        void Calculator() { new CalculatorWindow().OnBoard(this,result=>{}); }
         void Reference() {
-            var reference=Dialogs.Reference(this,surface.Board.Subject);
+            Dialogs.Reference(this,surface.Board.Subject,InsertReference);
+        }
+        void InsertReference(string[] reference) {
             if(reference==null) return;
             var center=surface.Center();
             var m=Mark.Make("text",center.X-220,center.Y-85,440,150,reference[0],reference[1]); TextLayout.Fit(m); surface.Add(m); ChooseTool("select");
         }
-        void Preview(Mark mark) { Dialogs.Preview(this,mark); }
+        bool PasteLink() {
+            Uri uri;
+            try {
+                if(!Clipboard.ContainsText()||!Dialogs.Url(Clipboard.GetText().Trim(),out uri))return false;
+            } catch(System.Runtime.InteropServices.ExternalException) {return false;}
+            var origin=surface.World(new PointF(surface.Area.Width*.24f,surface.Area.Height*.32f));
+            var mark=Mark.Make("link",origin.X,origin.Y,285,94,uri.Host,uri.AbsoluteUri);
+            surface.Add(mark);ChooseTool("select");Preview(mark);
+            return true;
+        }
+        void Preview(Mark mark) { OpenWebPage(mark); }
         void Help() { Dialogs.Help(this); }
         void CanvasMenu(Point at) {
             contextAt=Logical(at);popup="canvas";Invalidate();
@@ -402,6 +439,7 @@ namespace Polya {
             return choice==DialogResult.No||choice==DialogResult.Yes&&Save(false);
         }
         bool Save(bool copy) {
+            FinishText(true);
             string candidate=path;
             if(copy||String.IsNullOrEmpty(candidate)) {
                 candidate=FileSheet.Pick(this,true,path==null?null:Path.GetDirectoryName(path),path==null?"Моя тетрадь.polya":Path.GetFileName(path));

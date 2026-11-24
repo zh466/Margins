@@ -1,49 +1,47 @@
 # Margins
 
-**An offline whiteboard for lessons, tutoring, and study on Windows.**
+**Учебная доска для Windows.** Margins объединяет рисование от руки, конспекты и интерактивные материалы для уроков и самостоятельной работы. Тетради можно распределять по математике, физике, русскому языку и другим предметам. Доски и редактируемые объекты сохраняются в локальном файле `.polya`.
 
-Margins brings freehand drawing, notes, and subject-specific teaching tools into one workspace. Create a notebook for mathematics, physics, Russian language, or general work. Save it as a local `.polya` file and reopen it with its boards and editable objects intact.
+## Скачать
 
-## Download
+Откройте [последний релиз](../../releases/latest), скачайте архив для Windows x64 и распакуйте его целиком. Запустите `Margins.exe`. Для просмотра сайтов внутри доски нужен [Microsoft Edge WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/).
 
-Download **`Polya-v8.exe`** from [Releases](../../releases/latest) and run it on Windows. The v8 executable uses the original name **Поля** and has a Russian-language interface.
+## Возможности
 
-## What you can do
+- **Рисование и конспекты.** Перо с нажимом через Windows Ink, фигуры, текст без карточек, заметки, изображения, ластик объектов и пиксельный ластик.
+- **Математика.** Графики функций с параметром, тригонометрическая окружность с подвижной точкой, редактируемые чертежи по планиметрии и стереометрии.
+- **Физика.** Схемы цепей постоянного тока с редактируемыми компонентами и ветвями, справочник физических постоянных и инженерный калькулятор.
+- **Работа со ссылками.** Вставляйте адрес через `Ctrl+V` и просматривайте страницу на доске. Кнопка «На доску» добавляет снимок видимой части страницы для пометок.
+- **Уроки.** Собирайте материал в кадры, запускайте показ через `F5`, раскрывайте ответы на задания и следите за временем с помощью таймера.
 
-- **Sketch and annotate.** Draw with a pen, add shapes, notes and links, import PNG or JPEG worksheets, and erase objects by sweeping across them. Snap hand-drawn circles and straight strokes into clean shapes.
-- **Teach mathematics.** Plot functions, vary a parameter live, explore the unit circle, and drag vertices in geometry diagrams. Measurements and dependent constructions update as points move.
-- **Teach physics.** Build and edit simple DC circuits by inserting components onto wires. Change resistance, source voltage, branches, and switch states. The editor displays equivalent resistance and current for its idealized DC model.
-- **Run a lesson.** Organize material into frames, present it with `F5`, reveal answers, and display a countdown timer. The library includes subject-specific reference cards and lesson templates.
-- **Work with larger boards.** The canvas reuses rendered regions, updates the active gesture separately, and keeps grid lines anchored during zoom.
+## Скриншоты
 
-## Screenshots
+![Доска с открытым меню и материалами по тригонометрии](docs/screenshots/whiteboard.png)
 
-![Margins canvas with the board menu and a trigonometry lesson](docs/screenshots/whiteboard.png)
-
-| Notebook library | Editable circuit |
+| Библиотека тетрадей | Редактор электрической цепи |
 | --- | --- |
-| ![Subject tiles and recent notebooks](docs/screenshots/library.png) | ![Circuit editor with insertion points on the wires](docs/screenshots/circuit-editor.png) |
+| ![Предметы и недавние тетради](docs/screenshots/library.png) | ![Редактор цепи с точками добавления компонентов](docs/screenshots/circuit-editor.png) |
 
-## Files and sync
+## Файлы и синхронизация
 
-Use `Ctrl+S` to save a notebook and `Ctrl+O` to open one. To sync a notebook through Google Drive, save it inside a folder managed by Google Drive for desktop. [Google Drive for desktop guide](https://support.google.com/drive/answer/10838124)
+`Ctrl+S` сохраняет тетрадь, `Ctrl+O` открывает её. Для синхронизации сохраните файл в папку, которую обслуживает Google Диск для компьютеров. [Инструкция Google](https://support.google.com/drive/answer/10838124?hl=ru)
 
-## Build from source
+## Сборка из исходников
 
-Margins is written in C# using WinForms and the .NET Framework. On Windows, run the build script from the repository root:
+Приложение написано на C# с использованием WinForms и .NET Framework. Выполните команду из корня репозитория в Windows:
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File .\src\build.ps1
 ```
 
-The build produces `src\Polya.exe`. The UI fonts are embedded in the executable.
+Сборка создаёт `src\Polya.exe` для Windows x64. Скрипт скачивает указанную версию SDK WebView2 и копирует библиотеки рядом с программой.
 
-## License
+## Лицензия
 
-The application source is available under the [MIT License](LICENSE). Assistant and Source Sans 3 are distributed under their respective SIL Open Font Licenses, included in [the source folder](src).
+Исходный код открыт под [лицензией MIT](LICENSE). Шрифты Assistant и Source Sans 3 распространяются под лицензиями SIL Open Font License, включёнными в [папку исходников](src).
 
-## Recommendations
+## Рекомендации
 
-- Keep a dated `.polya` copy before making large changes to a lesson notebook.
-- Use frames to divide long lessons into a short explanation, a worked example, and practice. In presentation mode, use the arrow keys to switch frames and `Enter` to reveal an answer.
-- For performance reports, include the Windows version, display scaling, and the slow action, such as panning, zooming, drawing, or opening a file. A small notebook without personal or student information is especially useful for reproducing the issue.
+- Сохраняйте копию тетради перед большой переработкой урока.
+- Для совместимого графического планшета включите Windows Ink в настройках драйвера.
+- Если доска тормозит, приложите к отчёту версию Windows, масштаб дисплея и небольшой файл `.polya`, на котором воспроизводится проблема.

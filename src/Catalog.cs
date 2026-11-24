@@ -51,46 +51,45 @@ namespace Polya {
             {"syntax",new[]{new Category("Орфография и синтаксис","word|Состав слова","simple|Грамматическая основа","compound|Сложносочинённое","subordinate|Сложноподчинённое","speech|Прямая речь","homogeneous|Однородные члены","turn|Обособленный оборот")}}
         };
         static readonly Mark DemoGraph=Mark.Make("graph",0,0,200,100,"","sin(x)");
-        public static Item Pick(IWin32Window owner,Group group) {
-            using(var sheet=new Sheet(group.Name,"Выберите рисунок для вставки на доску",730,571)) {
-                var categories=Groups[group.Id]; Item selected=null;
-                var panel=sheet.Put(new FlowLayoutPanel{AutoScroll=true,WrapContents=true,BackColor=Art.White},19,143,695,411);
-                var heading=new List<Button>();
-                Action<int> render=null;
-                for(int i=0;i<categories.Length;i++) {
-                    int category=i;
-                    heading.Add(sheet.Action(categories[i].Name,22+i*195,98,187,()=>render(category)));
-                }
-                render=index=>{
-                    panel.SuspendLayout();
-                    while(panel.Controls.Count>0) panel.Controls[0].Dispose();
-                    for(int i=0;i<heading.Count;i++) {
-                        heading[i].BackColor=i==index?Art.Pale:Art.White;
-                        heading[i].ForeColor=i==index?Art.Purple:Art.Ink;
-                    }
-                    foreach(var item in categories[index].Items) {
-                        var tile=new DiagramPane{Size=new Size(216,119),Margin=new Padding(4,3,5,7),Cursor=Cursors.Hand};
-                        bool hovered=false;
-                        tile.Render=(g,r)=>{
-                            Art.Round(g,new RectangleF(1,1,r.Width-2,r.Height-2),12,hovered?Art.Pale:Art.C("#F8F7FC"),Art.Line);
-                            if(item.Id=="graph") GraphArt.Plot(g,new RectangleF(8,0,r.Width-16,90),DemoGraph,Art.Purple);
-                            else if(item.Id=="trig") GraphArt.Circle(g,new RectangleF(8,-4,r.Width-16,104),40);
-                            else {
-                                var sample=Mark.Make("diagram",12,2,r.Width-24,85,"",item.Id);
-                                sample.Labels=false;DiagramEdit.Draw(g,sample);
-                            }
-                            Art.Label(g,item.Name,6,90,r.Width-12,23,12,Art.Ink,true,StringAlignment.Center);
-                        };
-                        tile.MouseEnter+=(s,e)=>{hovered=true;tile.Invalidate();};
-                        tile.MouseLeave+=(s,e)=>{hovered=false;tile.Invalidate();};
-                        tile.Click+=(s,e)=>{selected=item;sheet.DialogResult=DialogResult.OK;};
-                        panel.Controls.Add(tile);
-                    }
-                    panel.AutoScrollPosition=Point.Empty;panel.ResumeLayout();
-                };
-                render(0);
-                return sheet.ShowDialog(owner)==DialogResult.OK?selected:null;
+        public static void Pick(Workspace owner,Group group,Action<Item> done) {
+            var sheet=new Sheet(group.Name,"Выберите рисунок для вставки на доску",730,571);
+            var categories=Groups[group.Id]; Item selected=null;
+            var panel=sheet.Put(new FlowLayoutPanel{AutoScroll=true,WrapContents=true,BackColor=Art.White},19,143,695,411);
+            var heading=new List<Button>();
+            Action<int> render=null;
+            for(int i=0;i<categories.Length;i++) {
+                int category=i;
+                heading.Add(sheet.Action(categories[i].Name,22+i*195,98,187,()=>render(category)));
             }
+            render=index=>{
+                panel.SuspendLayout();
+                while(panel.Controls.Count>0) panel.Controls[0].Dispose();
+                for(int i=0;i<heading.Count;i++) {
+                    heading[i].BackColor=i==index?Art.Pale:Art.White;
+                    heading[i].ForeColor=i==index?Art.Purple:Art.Ink;
+                }
+                foreach(var item in categories[index].Items) {
+                    var tile=new DiagramPane{Size=new Size(216,119),Margin=new Padding(4,3,5,7),Cursor=Cursors.Hand};
+                    bool hovered=false;
+                    tile.Render=(g,r)=>{
+                        Art.Round(g,new RectangleF(1,1,r.Width-2,r.Height-2),12,hovered?Art.Pale:Art.C("#F8F7FC"),Art.Line);
+                        if(item.Id=="graph") GraphArt.Plot(g,new RectangleF(8,0,r.Width-16,90),DemoGraph,Art.Purple);
+                        else if(item.Id=="trig") GraphArt.Circle(g,new RectangleF(8,-4,r.Width-16,104),40);
+                        else {
+                            var sample=Mark.Make("diagram",12,2,r.Width-24,85,"",item.Id);
+                            sample.Labels=false;DiagramEdit.Draw(g,sample);
+                        }
+                        Art.Label(g,item.Name,6,90,r.Width-12,23,12,Art.Ink,true,StringAlignment.Center);
+                    };
+                    tile.MouseEnter+=(s,e)=>{hovered=true;tile.Invalidate();};
+                    tile.MouseLeave+=(s,e)=>{hovered=false;tile.Invalidate();};
+                    tile.Click+=(s,e)=>{selected=item;sheet.DialogResult=DialogResult.OK;};
+                    panel.Controls.Add(tile);
+                }
+                panel.AutoScrollPosition=Point.Empty;panel.ResumeLayout();
+            };
+            render(0);
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?selected:null));
         }
         public static void Draw(Graphics g,string id,RectangleF card,string title) {
             DiagramEdit.Draw(g,Mark.Make("diagram",card.X,card.Y,card.Width,card.Height,title,id));

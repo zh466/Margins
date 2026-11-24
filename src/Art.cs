@@ -95,6 +95,7 @@ namespace Polya {
                 case "arrow":Stroke(g,c,1.7f,5,19,19,5,12,5);Stroke(g,c,1.7f,19,5,19,12);break;
                 case "text":Stroke(g,c,1.7f,5,7,5,5,19,5,19,7);Stroke(g,c,1.7f,12,5,12,19);Stroke(g,c,1.7f,9,19,15,19);break;
                 case "note":Stroke(g,c,1.6f,14,20,5,20,5,4,19,4,19,15,14,20,14,15,19,15);break;
+                case "pixel": Stroke(g,c,1.6f,3,15,12,6,18,12,9,21,3,15);Dot(g,c,17,18,1);Dot(g,c,21,15,1);Dot(g,c,21,20,1);break;
                 case "link":Stroke(g,c,1.7f,10,7,13,4,17,4,20,7,20,10,16,14,13,14);Stroke(g,c,1.7f,14,17,11,20,7,20,4,17,4,14,8,10,11,10);Stroke(g,c,1.7f,9,15,15,9);break;
                 case "eraser":Stroke(g,c,1.6f,9,19,4,14,4,12,12,4,14,4,20,10,20,12,13,19,9,19,20,19);Stroke(g,c,1.6f,8,9,15,16);break;
                 case "undo":case "redo":

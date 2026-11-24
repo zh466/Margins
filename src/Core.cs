@@ -24,6 +24,8 @@ namespace Polya {
         public float H { get; set; }
         public float Size { get; set; }
         public float[] Points { get; set; }
+        public float[] Cuts { get; set; }
+        public float[] Pressure { get; set; }
         public double From { get; set; }
         public double To { get; set; }
         public double Angle { get; set; }
@@ -74,6 +76,9 @@ namespace Polya {
                     if(mark==null || !kinds.Contains(mark.Kind) || !Finite(mark.X) || !Finite(mark.Y) || !Finite(mark.W) || !Finite(mark.H) || !Finite(mark.Size) ||
                         mark.W<0 || mark.H<0 || (mark.Points!=null && (mark.Points.Length%2!=0 || mark.Points.Any(v=>!Finite(v)))))
                         throw new FormatException("В файле есть некорректный объект.");
+                    if(mark.Cuts!=null&&(mark.Cuts.Length%5!=0||mark.Cuts.Any(v=>!Finite(v))))
+                        throw new FormatException("Некорректная маска стирания.");
+                    if(mark.Pressure!=null&&(mark.Points==null||mark.Pressure.Length!=mark.Points.Length/2||mark.Pressure.Any(v=>!Finite(v)||v<.2f||v>1))) mark.Pressure=null;
                     if(mark.Kind=="graph"&&(!(mark.From<mark.To)||Math.Abs(mark.From)>1e9||Math.Abs(mark.To)>1e9))
                         throw new FormatException("В файле есть график с некорректным диапазоном.");
                     if(mark.Kind=="trig"&&(Double.IsNaN(mark.Angle)||Double.IsInfinity(mark.Angle)))

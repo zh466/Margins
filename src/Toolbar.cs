@@ -4,16 +4,16 @@ using System.Windows.Forms;
 
 namespace Polya {
     sealed partial class Workspace {
-        static readonly string[] ToolIds={"hand","select","rect","diamond","ellipse","arrow","line","pen","text","note","eraser"};
+        static readonly string[] ToolIds={"hand","select","rect","diamond","ellipse","arrow","line","pen","text","note","eraser","pixel"};
         static readonly string[] ToolNames={"Рука · H","Выделение · V / 1","Прямоугольник · R / 2","Ромб · D / 3",
-            "Эллипс · O / 4","Стрелка · A / 5","Линия · L / 6","Перо · P / 7","Текст · T / 8","Заметка · N","Ластик · E"};
-        static readonly string[] ToolKeys={"H","V","R","D","O","A","L","P","T","N","E"};
+            "Эллипс · O / 4","Стрелка · A / 5","Линия · L / 6","Перо · P / 7","Текст · T / 8","Заметка · N / 9","Ластик объектов · E","Пиксельный ластик · Shift+E"};
+        static readonly string[] ToolKeys={"H","V","R","D","O","A","L","P","T","N","E",null};
         static readonly string[] Fills={"","#EEE7FF","#F9DFE9","#DDF4EB","#E1EEFE","#FFF1C3"};
         static readonly string[] NoteFills={"#FFFFFF","#EEE7FF","#F9DFE9","#DDF4EB","#E1EEFE","#FFF1C3"};
         RectangleF strip;
         void DrawToolStrip(Graphics g) {
-            float step=Math.Max(25,Math.Min(37,(screenW-140)/13f));
-            float width=step*13+25;
+            float step=Math.Max(25,Math.Min(37,(screenW-140)/14f));
+            float width=step*14+25;
             strip=R((screenW-width)/2,15,width,45);
             Art.Round(g,R(strip.X,strip.Y+2,strip.Width,strip.Height),11,Color.FromArgb(14,32,32,54));
             Art.Round(g,strip,11,Art.White,Art.Line);
@@ -25,9 +25,9 @@ namespace Polya {
             Art.Stroke(g,Art.Line,1,strip.X+step+8,strip.Y+11,strip.X+step+8,strip.Bottom-11);
             for(int i=0;i<ToolIds.Length;i++) {
                 string id=ToolIds[i];
-                ToolGlyph(g,slot(i+1),id,ToolNames[i],step>=32?ToolKeys[i]:null,()=>ChooseTool(id),surface.Tool==id);
+                ToolGlyph(g,slot(i+1),id=="pixel"?"pixel":id,ToolNames[i],step>=32?ToolKeys[i]:null,()=>ChooseTool(id),surface.Tool==id);
             }
-            ToolGlyph(g,slot(12),"more","Дополнительные инструменты",null,()=>TogglePopup("more"),popup=="more"||surface.Tool=="link");
+            ToolGlyph(g,slot(13),"more","Дополнительные инструменты",null,()=>TogglePopup("more"),popup=="more"||surface.Tool=="link");
             var options=R(18,77,41,40);
             Button(g,options,"background",null,()=>TogglePopup("background"),"Фон доски",active:popup=="background");
         }

@@ -43,7 +43,7 @@ namespace Polya {
             } catch(Exception) { Notice("Не удалось обновить список недавних файлов"); }
         }
         void Navigate(ScreenPage next) {
-            StopZoom();
+            StopZoom();CloseCanvasPanel();
             page=next; popup=null;fan=false;fanProgress=0;fanTimer.Stop(); fileOffset=0;
             Invalidate();
         }
@@ -80,9 +80,9 @@ namespace Polya {
             RailIcon(g,R(zx+221,zy+1,36,34),"redo","Повторить · Ctrl+Y",()=>surface.Undo(true),false,!surface.CanRedo);
             Button(g,R(screenW-123,zy,36,36),"help",null,Help,"Горячие клавиши · F1");
             if(status!="Готово к работе") Art.Label(g,status,screenW/2-120,zy,240,36,12,Art.Muted,false,StringAlignment.Center);
-            if(surface.Tool=="eraser"&&pointerSeen&&surface.Area.Contains(pointer)&&At(pointer)==null&&popup==null) {
+            if(Surface.IsEraser(surface.Tool)&&pointerSeen&&surface.Area.Contains(pointer)&&At(pointer)==null&&popup==null) {
                 Art.Dot(g,Color.FromArgb(125,255,255,255),pointer.X,pointer.Y,10);
-                Art.Circle(g,Art.Purple,pointer.X,pointer.Y,10,1.4f);
+                Art.Circle(g,Art.Muted,pointer.X,pointer.Y,10,1.15f);
             }
             DrawToolOptions(g);
             DrawFan(g);
@@ -120,7 +120,9 @@ namespace Polya {
             if(tool.Id=="calc") {Calculator();return;}
             if(tool.Id=="book") {Reference();return;}
             if(tool.Id=="graph") {NewWidget("graph");return;}
-            var item=Catalog.Pick(this,tool);
+            Catalog.Pick(this,tool,InsertStudyItem);
+        }
+        void InsertStudyItem(Catalog.Item item) {
             if(item==null) return;
             if(item.Id=="graph"||item.Id=="trig") {NewWidget(item.Id);return;}
             var center=surface.Center();

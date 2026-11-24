@@ -16,6 +16,7 @@ using System.Windows.Forms;
 namespace Polya {
     class Sheet : Form {
         protected readonly int W,H;
+        readonly Label subtitleLabel;
         public Sheet(string title,string subtitle,int w,int h) {
             W=w; H=h;
             AutoScaleDimensions=new SizeF(96,96);AutoScaleMode=AutoScaleMode.Dpi;
@@ -24,12 +25,38 @@ namespace Polya {
             Text=title; BackColor=Art.White; Font=new Font("Segoe UI",10);DoubleBuffered=true;KeyPreview=true;
             var head=new Panel {BackColor=Art.Sidebar,Location=Point.Empty,Size=new Size(w,83),Anchor=AnchorStyles.Top|AnchorStyles.Left|AnchorStyles.Right};
             var name=new Label {Text=title,Location=new Point(20,12),Size=new Size(w-72,36),Font=new Font("Segoe UI",18,FontStyle.Bold),ForeColor=Art.Ink,AutoEllipsis=true};
-            var sub=new Label {Text=subtitle,Location=new Point(22,51),Size=new Size(w-44,23),ForeColor=Art.Muted};
-            head.Controls.Add(name);head.Controls.Add(sub);Controls.Add(head);
+            subtitleLabel=new Label {Text=subtitle,Location=new Point(22,51),Size=new Size(w-44,23),ForeColor=Art.Muted};
+            head.Controls.Add(name);head.Controls.Add(subtitleLabel);Controls.Add(head);
             var close=new SheetButton("×",false) {Location=new Point(w-49,13),Size=new Size(34,32),AccessibleName="Закрыть",TabStop=false};
             close.Click+=(s,e)=>DialogResult=DialogResult.Cancel;
             head.Controls.Add(close);close.BringToFront();
             KeyDown+=(s,e)=>{if(e.KeyCode==Keys.Escape){DialogResult=DialogResult.Cancel;e.SuppressKeyPress=true;}};
+        }
+        Action<DialogResult> boardResult;
+        internal void OnBoard(Workspace owner,Action<DialogResult> result) {
+            boardResult=result;
+            TopLevel=false;
+            var scroll=new Panel{AutoScroll=true,BackColor=Art.White,BorderStyle=BorderStyle.FixedSingle};
+            scroll.Controls.Add(this);
+            Location=Point.Empty;
+            owner.ShowCanvasPanel(scroll,W+22);
+            Show();
+        }
+        public new DialogResult DialogResult {
+            get {return base.DialogResult;}
+            set {
+                if(boardResult==null) {base.DialogResult=value;return;}
+                var done=boardResult;boardResult=null;
+                var scroll=Parent;
+                var owner=scroll==null?null:scroll.Parent as Workspace;
+                if(owner!=null)owner.DetachCanvasPanel(scroll);
+                try {done(value);}
+                finally {if(scroll!=null)scroll.Dispose();}
+            }
+        }
+        protected override bool ProcessCmdKey(ref Message message,Keys keyData) {
+            if(boardResult!=null&&keyData==Keys.Escape){DialogResult=DialogResult.Cancel;return true;}
+            return base.ProcessCmdKey(ref message,keyData);
         }
         protected override void OnSizeChanged(EventArgs e) {
             base.OnSizeChanged(e);
@@ -79,7 +106,11 @@ namespace Polya {
             cancel.DialogResult=DialogResult.Cancel;CancelButton=cancel;
             AcceptButton=Action(text,W-140,H-54,118,()=>{if(done()) DialogResult=DialogResult.OK;},true);
         }
-        public bool Error(string message) {Prompts.Alert(this,Text,message);return false;}
+        public bool Error(string message) {
+            if(boardResult==null)Prompts.Alert(this,Text,message);
+            else {subtitleLabel.Text=message;subtitleLabel.ForeColor=Art.C("#A32B52");}
+            return false;
+        }
     }
     sealed class SheetButton : Button {
         readonly bool primary;
@@ -122,103 +153,101 @@ namespace Polya {
                 name=field.Text.Trim();subject=selector==null?0:selector.SelectedIndex; return accepted;
             }
         }
-        public static Mark Edit(IWin32Window owner,Mark mark) {
+        public static void Edit(Workspace owner,Mark mark,Action<Mark> done) {
             bool link=mark.Kind=="link",heading=mark.Kind=="heading",note=mark.Kind=="note";
             var copy=mark.Copy();
-            using(var sheet=new Sheet(link?"Ссылка":heading?"Заголовок":note?"Заметка":"Текст",
-                link?"На доске появится карточка с предварительным просмотром":"Изменения появятся на холсте после сохранения",532,link||heading?278:474)) {
-                sheet.Caption(link?"Название ссылки":"Заголовок",22,99,480); var title=sheet.Field(mark.Title,22,124,488); title.MaxLength=250;
-                sheet.Caption(link?"Адрес HTTPS или HTTP":heading?"Подзаголовок":"Текст",22,161,480);
-                var line=link||heading?sheet.Field(mark.Text,22,187,488):null;
-                var body=line==null?sheet.Body(mark.Text,22,187,488,note?181:215):null;
-                ComboBox colors=null;
-                var names=new[]{"Песочная","Мятная","Лавандовая","Розовая","Белая"};
-                var colorsHex=new[]{"#FFF1C3","#DDF4EB","#EEE7FF","#F9E6F0","#FFFFFF"};
-                if(note) {
-                    colors=sheet.Put(new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList},22,379,181,26);
-                    colors.Items.AddRange(names);colors.SelectedIndex=Math.Max(0,Array.IndexOf(colorsHex,mark.Color));
-                }
-                sheet.Footer("Готово",()=>{
-                    copy.Title=title.Text.Trim();copy.Text=line==null?body.Text:line.Text.Trim();
-                    if(link) {
-                        Uri uri;if(!Url(copy.Text,out uri)) return sheet.Error("Введите полный веб-адрес, например https://example.org.");
-                        if(String.IsNullOrEmpty(copy.Title)) copy.Title=uri.Host;
-                    }
-                    if(colors!=null) copy.Color=colorsHex[colors.SelectedIndex];
-                    return !String.IsNullOrWhiteSpace(copy.Title+copy.Text)||sheet.Error("Введите текст или заголовок.");
-                });
-                sheet.ActiveControl=link?(Control)line:body??(Control)title;
-                return sheet.ShowDialog(owner)==DialogResult.OK?copy:null;
+            var sheet=new Sheet(link?"Ссылка":heading?"Заголовок":note?"Заметка":"Текст",
+            link?"Страница откроется на доске после добавления":"Изменения появятся на холсте после сохранения",532,link||heading?278:474);
+            sheet.Caption(link?"Название ссылки":"Заголовок",22,99,480); var title=sheet.Field(mark.Title,22,124,488); title.MaxLength=250;
+            sheet.Caption(link?"Адрес HTTPS или HTTP":heading?"Подзаголовок":"Текст",22,161,480);
+            var line=link||heading?sheet.Field(mark.Text,22,187,488):null;
+            var body=line==null?sheet.Body(mark.Text,22,187,488,note?181:215):null;
+            ComboBox colors=null;
+            var names=new[]{"Песочная","Мятная","Лавандовая","Розовая","Белая"};
+            var colorsHex=new[]{"#FFF1C3","#DDF4EB","#EEE7FF","#F9E6F0","#FFFFFF"};
+            if(note) {
+                colors=sheet.Put(new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList},22,379,181,26);
+                colors.Items.AddRange(names);colors.SelectedIndex=Math.Max(0,Array.IndexOf(colorsHex,mark.Color));
             }
+            sheet.Footer("Готово",()=>{
+                copy.Title=title.Text.Trim();copy.Text=line==null?body.Text:line.Text.Trim();
+                if(link) {
+                    Uri uri;if(!Url(copy.Text,out uri)) return sheet.Error("Введите полный веб-адрес, например https://example.org.");
+                    if(String.IsNullOrEmpty(copy.Title)) copy.Title=uri.Host;
+                }
+                if(colors!=null) copy.Color=colorsHex[colors.SelectedIndex];
+                return !String.IsNullOrWhiteSpace(copy.Title+copy.Text)||sheet.Error("Введите текст или заголовок.");
+            });
+            sheet.ActiveControl=link?(Control)line:body??(Control)title;
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?copy:null));
         }
         static bool Number(string text,out double result) {
             return Double.TryParse(text.Trim().Replace(',','.').Replace("−","-"),NumberStyles.Float,CultureInfo.InvariantCulture,out result)&&
                 !Double.IsNaN(result)&&!Double.IsInfinity(result);
         }
-        public static Mark Graph(IWin32Window owner,Mark mark) {
+        public static void Graph(Workspace owner,Mark mark,Action<Mark> done) {
             var copy=mark.Copy();
-            using(var sheet=new Sheet("График функции","Введите sin(x), x^2 или a*x^2. Углы в радианах.",565,580))
-            using(var redraw=new Timer{Interval=180}) {
-                sheet.Caption("Функция y = f(x)",22,96,290);var input=sheet.Field(copy.Text,22,123,521);input.MaxLength=512;
-                sheet.Caption("x от",22,157,100);sheet.Caption("x до",158,157,100);
-                var from=sheet.Field(copy.From.ToString("G",CultureInfo.InvariantCulture),22,181,120);
-                var to=sheet.Field(copy.To.ToString("G",CultureInfo.InvariantCulture),158,181,120);
-                var parameter=sheet.Caption("",22,211,521);parameter.ForeColor=Art.Purple;
-                var dial=sheet.Put(new TrackBar{Minimum=-100,Maximum=100,TickFrequency=25,Value=(int)Math.Round(Math.Max(-10,Math.Min(10,mark.Parameter??1))*10)},19,237,522,42);
-                var error=sheet.Caption("",22,281,521);error.ForeColor=Art.C("#A32B52");
-                var plot=sheet.Put(new DiagramPane(),22,309,521,198);
-                Mark preview=null;
-                plot.Render=(g,r)=>{if(preview!=null) GraphArt.Plot(g,r,preview,Art.Purple);};
-                Func<bool> validate=()=>{
-                    double a,b;
-                    if(!Number(from.Text,out a)||!Number(to.Text,out b)||a>=b||Math.Abs(a)>1e9||Math.Abs(b)>1e9) {
-                        error.Text="Введите диапазон от меньшего к большему, в пределах ±10⁹."; return false;
-                    }
-                    parameter.Text="Параметр a   "+(dial.Value/10.0).ToString("0.0",CultureInfo.CurrentCulture)+"   ·   используйте a в формуле";
-                    try {Formula.Compile(input.Text,parameter:dial.Value/10.0);}
-                    catch(FormatException ex) {error.Text=ex.Message;return false;}
-                    error.Text=""; copy.Text=input.Text.Trim();copy.From=a;copy.To=b;copy.Parameter=dial.Value/10.0;
-                    preview=copy.Copy();plot.Invalidate(); return true;
-                };
-                EventHandler refresh=(s,e)=>{redraw.Stop();redraw.Start();};
-                input.TextChanged+=refresh;from.TextChanged+=refresh;to.TextChanged+=refresh;
-                dial.ValueChanged+=(s,e)=>{if(!validate()){preview=null;plot.Invalidate();}};
-                redraw.Tick+=(s,e)=>{redraw.Stop();if(!validate()) {preview=null;plot.Invalidate();}};
-                bool isNew=String.IsNullOrWhiteSpace(mark.Title)||mark.Title=="График функции";
-                sheet.Footer(isNew?"На доску":"Готово",validate);validate();
-                sheet.ActiveControl=input;input.SelectAll();
-                return sheet.ShowDialog(owner)==DialogResult.OK?copy:null;
-            }
+            var sheet=new Sheet("График функции","Введите sin(x), x^2 или a*x^2. Углы в радианах.",565,580);
+            var redraw=new Timer{Interval=180};
+            sheet.Disposed+=(s,e)=>redraw.Dispose();
+            sheet.Caption("Функция y = f(x)",22,96,290);var input=sheet.Field(copy.Text,22,123,521);input.MaxLength=512;
+            sheet.Caption("x от",22,157,100);sheet.Caption("x до",158,157,100);
+            var from=sheet.Field(copy.From.ToString("G",CultureInfo.InvariantCulture),22,181,120);
+            var to=sheet.Field(copy.To.ToString("G",CultureInfo.InvariantCulture),158,181,120);
+            var parameter=sheet.Caption("",22,211,521);parameter.ForeColor=Art.Purple;
+            var dial=sheet.Put(new TrackBar{Minimum=-100,Maximum=100,TickFrequency=25,Value=(int)Math.Round(Math.Max(-10,Math.Min(10,mark.Parameter??1))*10)},19,237,522,42);
+            var error=sheet.Caption("",22,281,521);error.ForeColor=Art.C("#A32B52");
+            var plot=sheet.Put(new DiagramPane(),22,309,521,198);
+            Mark preview=null;
+            plot.Render=(g,r)=>{if(preview!=null) GraphArt.Plot(g,r,preview,Art.Purple);};
+            Func<bool> validate=()=>{
+                double a,b;
+                if(!Number(from.Text,out a)||!Number(to.Text,out b)||a>=b||Math.Abs(a)>1e9||Math.Abs(b)>1e9) {
+                    error.Text="Введите диапазон от меньшего к большему, в пределах ±10⁹."; return false;
+                }
+                parameter.Text="Параметр a   "+(dial.Value/10.0).ToString("0.0",CultureInfo.CurrentCulture)+"   ·   используйте a в формуле";
+                try {Formula.Compile(input.Text,parameter:dial.Value/10.0);}
+                catch(FormatException ex) {error.Text=ex.Message;return false;}
+                error.Text=""; copy.Text=input.Text.Trim();copy.From=a;copy.To=b;copy.Parameter=dial.Value/10.0;
+                preview=copy.Copy();plot.Invalidate(); return true;
+            };
+            EventHandler refresh=(s,e)=>{redraw.Stop();redraw.Start();};
+            input.TextChanged+=refresh;from.TextChanged+=refresh;to.TextChanged+=refresh;
+            dial.ValueChanged+=(s,e)=>{if(!validate()){preview=null;plot.Invalidate();}};
+            redraw.Tick+=(s,e)=>{redraw.Stop();if(!validate()) {preview=null;plot.Invalidate();}};
+            bool isNew=String.IsNullOrWhiteSpace(mark.Title)||mark.Title=="График функции";
+            sheet.Footer(isNew?"На доску":"Готово",validate);validate();
+            sheet.ActiveControl=input;input.SelectAll();
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?copy:null));
         }
-        public static Mark Trig(IWin32Window owner,Mark mark) {
+        public static void Trig(Workspace owner,Mark mark,Action<Mark> done) {
             var copy=mark.Copy();
-            using(var sheet=new Sheet("Тригонометрическая окружность","Передвигайте точку на окружности или меняйте угол",520,558)) {
-                var pane=sheet.Put(new DiagramPane(),22,101,476,264);
-                var angle=sheet.Put(new NumericUpDown { Minimum=0,Maximum=360,DecimalPlaces=1,Increment=1,
-                    Value=(decimal)((mark.Angle%360+360)%360) },381,379,117,28);
-                var slider=sheet.Put(new TrackBar{Minimum=0,Maximum=360,TickFrequency=45,SmallChange=1,LargeChange=15},20,372,350,43);
-                var values=sheet.Caption("",25,428,470);
-                values.Font=new Font("Consolas",11,FontStyle.Bold);
-                values.ForeColor=Art.Purple;
-                Action refresh=()=>{
-                    copy.Angle=(double)angle.Value;
-                    double rad=copy.Angle*Math.PI/180;
-                    values.Text=String.Format(CultureInfo.InvariantCulture,"sin α = {0:0.000}     cos α = {1:0.000}     α = {2:0.000} рад",Math.Sin(rad),Math.Cos(rad),rad);
-                    pane.Invalidate();
-                };
-                pane.Render=(g,r)=>GraphArt.Circle(g,r,copy.Angle);
-                angle.ValueChanged+=(s,e)=>{slider.Value=(int)Math.Round(angle.Value);refresh();};
-                slider.Scroll+=(s,e)=>angle.Value=slider.Value;
-                MouseEventHandler track=(s,e)=>{
-                    if(e.Button!=MouseButtons.Left) return;
-                    double a=Math.Atan2(pane.Height/2.0-e.Y,e.X-pane.Width/2.0)*180/Math.PI;
-                    angle.Value=(decimal)Math.Round((a+360)%360,1);
-                };
-                pane.MouseDown+=track; pane.MouseMove+=track; pane.Cursor=Cursors.Cross;
-                slider.Value=(int)Math.Round(angle.Value);refresh();
-                sheet.Footer("На доску",()=>true);
-                return sheet.ShowDialog(owner)==DialogResult.OK?copy:null;
-            }
+            var sheet=new Sheet("Тригонометрическая окружность","Передвигайте точку на окружности или меняйте угол",520,558);
+            var pane=sheet.Put(new DiagramPane(),22,101,476,264);
+            var angle=sheet.Put(new NumericUpDown { Minimum=0,Maximum=360,DecimalPlaces=1,Increment=1,
+                Value=(decimal)((mark.Angle%360+360)%360) },381,379,117,28);
+            var slider=sheet.Put(new TrackBar{Minimum=0,Maximum=360,TickFrequency=45,SmallChange=1,LargeChange=15},20,372,350,43);
+            var values=sheet.Caption("",25,428,470);
+            values.Font=new Font("Consolas",11,FontStyle.Bold);
+            values.ForeColor=Art.Purple;
+            Action refresh=()=>{
+                copy.Angle=(double)angle.Value;
+                double rad=copy.Angle*Math.PI/180;
+                values.Text=String.Format(CultureInfo.InvariantCulture,"sin α = {0:0.000}     cos α = {1:0.000}     α = {2:0.000} рад",Math.Sin(rad),Math.Cos(rad),rad);
+                pane.Invalidate();
+            };
+            pane.Render=(g,r)=>GraphArt.Circle(g,r,copy.Angle);
+            angle.ValueChanged+=(s,e)=>{slider.Value=(int)Math.Round(angle.Value);refresh();};
+            slider.Scroll+=(s,e)=>angle.Value=slider.Value;
+            MouseEventHandler track=(s,e)=>{
+                if(e.Button!=MouseButtons.Left) return;
+                double a=Math.Atan2(pane.Height/2.0-e.Y,e.X-pane.Width/2.0)*180/Math.PI;
+                angle.Value=(decimal)Math.Round((a+360)%360,1);
+            };
+            pane.MouseDown+=track; pane.MouseMove+=track; pane.Cursor=Cursors.Cross;
+            slider.Value=(int)Math.Round(angle.Value);refresh();
+            sheet.Footer("На доску",()=>true);
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?copy:null));
         }
         static readonly string[][] Physics={
             new[]{"Ускорение свободного падения","Стандартное ускорение gₙ = 9,80665 м/с².\n\nВ школьных задачах у поверхности Земли обычно используют g ≈ 9,81 м/с². Для грубой оценки g ≈ 10 м/с²."},
@@ -244,25 +273,24 @@ namespace Polya {
             new[]{"Квадратное уравнение","ax² + bx + c = 0, a ≠ 0\nD = b² − 4ac\n\nПри D > 0: x₁,₂ = (−b ± √D)/(2a).\nПри D = 0: x = −b/(2a).\nПри D < 0 действительных корней нет."},
             new[]{"Свойства логарифмов","При a > 0, a ≠ 1 и x, y > 0:\n\nlogₐ(xy) = logₐ x + logₐ y\nlogₐ(x/y) = logₐ x − logₐ y\nlogₐ(xʳ) = r logₐ x"}
         };
-        public static string[] Reference(IWin32Window owner,string subject) {
+        public static void Reference(Workspace owner,string subject,Action<string[]> done) {
             var rows=subject=="physics"?Physics:subject=="russian"?Russian:MathRef;
-            using(var sheet=new Sheet(subject=="physics"?"Физические постоянные":subject=="russian"?"Шпаргалки":"Справочник",Seed.Subject(subject),659,446)) {
-                var list=sheet.Put(new ListBox{BorderStyle=BorderStyle.None,IntegralHeight=false,ForeColor=Art.Ink,DrawMode=DrawMode.OwnerDrawFixed,ItemHeight=36},22,104,232,271);
-                var body=sheet.Body("",268,104,369,271,true);
-                body.BackColor=Art.C("#FAF9FD");
-                list.DrawItem+=(s,e)=>{
-                    if(e.Index<0) return;
-                    Art.Prepare(e.Graphics);
-                    bool selected=(e.State&DrawItemState.Selected)!=0;
-                    var r=new RectangleF(e.Bounds.X+1,e.Bounds.Y+2,e.Bounds.Width-3,e.Bounds.Height-5);
-                    Art.Round(e.Graphics,r,8,selected?Art.Pale:Art.C("#F7F6FB"));
-                    Art.Label(e.Graphics,rows[e.Index][0],r.X+10,r.Y,r.Width-18,r.Height,13,selected?Art.Purple:Art.Ink,selected);
-                };
-                list.Items.AddRange(rows.Select(row=>row[0]).ToArray());
-                list.SelectedIndexChanged+=(s,e)=>{if(list.SelectedIndex>=0) body.Text=rows[list.SelectedIndex][0]+"\n\n"+rows[list.SelectedIndex][1];};
-                list.SelectedIndex=0; sheet.Footer("На доску",()=>list.SelectedIndex>=0);
-                return sheet.ShowDialog(owner)==DialogResult.OK?rows[list.SelectedIndex]:null;
-            }
+            var sheet=new Sheet(subject=="physics"?"Физические постоянные":subject=="russian"?"Шпаргалки":"Справочник",Seed.Subject(subject),659,446);
+            var list=sheet.Put(new ListBox{BorderStyle=BorderStyle.None,IntegralHeight=false,ForeColor=Art.Ink,DrawMode=DrawMode.OwnerDrawFixed,ItemHeight=36},22,104,232,271);
+            var body=sheet.Body("",268,104,369,271,true);
+            body.BackColor=Art.C("#FAF9FD");
+            list.DrawItem+=(s,e)=>{
+                if(e.Index<0) return;
+                Art.Prepare(e.Graphics);
+                bool selected=(e.State&DrawItemState.Selected)!=0;
+                var r=new RectangleF(e.Bounds.X+1,e.Bounds.Y+2,e.Bounds.Width-3,e.Bounds.Height-5);
+                Art.Round(e.Graphics,r,8,selected?Art.Pale:Art.C("#F7F6FB"));
+                Art.Label(e.Graphics,rows[e.Index][0],r.X+10,r.Y,r.Width-18,r.Height,13,selected?Art.Purple:Art.Ink,selected);
+            };
+            list.Items.AddRange(rows.Select(row=>row[0]).ToArray());
+            list.SelectedIndexChanged+=(s,e)=>{if(list.SelectedIndex>=0) body.Text=rows[list.SelectedIndex][0]+"\n\n"+rows[list.SelectedIndex][1];};
+            list.SelectedIndex=0; sheet.Footer("На доску",()=>list.SelectedIndex>=0);
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?rows[list.SelectedIndex]:null));
         }
         public static bool Drive(IWin32Window owner) {
             using(var sheet=new Sheet("Сохранение в Google Drive","Файл .polya можно сохранить в синхронизируемую папку",526,294)) {
@@ -273,12 +301,12 @@ namespace Polya {
         }
         public static void Help(IWin32Window owner) {
             using(var sheet=new Sheet("Горячие клавиши","Рисование, навигация и файлы",500,478)) {
-                sheet.Body("V — выбор                 H / Пробел — рука\nP — перо                   R — прямоугольник\nO — эллипс               A — стрелка         L — линия\nT — текст                 N — заметка          K — ссылка\nE — ластик               Del — удалить\nD — ромб                  Q — закрепить инструмент\n\nCtrl+Z — отмена        Ctrl+Y — повторить\nCtrl+D — дублировать выбранный объект\nКолесо — масштаб    0 — показать всю доску\nShift при рисовании — круг, квадрат или шаг 45°\nДвойной щелчок — редактирование или просмотр ссылки\n\nCtrl+S — сохранить      Ctrl+Shift+S — сохранить как\nCtrl+O — открыть         Ctrl+N — новая тетрадь\nF2 — переименовать доску\nПКМ по холсту — команды доски",22,103,456,301,true).BorderStyle=BorderStyle.None;
+                sheet.Body("V — выбор                 H / Пробел — рука\nP — перо                   R — прямоугольник\nO — эллипс               A — стрелка         L — линия\nT — текст                 N — заметка          K — ссылка\nE — ластик объектов    Shift+E — пиксельный ластик\n1–8 — инструменты от выделения до текста     9 — заметка\nDel — удалить\nD — ромб                  Q — закрепить инструмент\n\nCtrl+Z — отмена        Ctrl+Y — повторить\nCtrl+D — дублировать выбранный объект\nКолесо — масштаб    0 — показать всю доску\nShift при рисовании — круг, квадрат или шаг 45°\nДвойной щелчок — редактирование или просмотр ссылки\n\nCtrl+S — сохранить      Ctrl+Shift+S — сохранить как\nCtrl+O — открыть         Ctrl+N — новая тетрадь\nF2 — переименовать доску\nПКМ по холсту — команды доски",22,103,456,301,true).BorderStyle=BorderStyle.None;
                 sheet.AcceptButton=sheet.Action("Закрыть",360,424,118,()=>sheet.Close(),true);
                 sheet.ShowDialog(owner);
             }
         }
-        static bool Url(string value,out Uri uri) {
+        internal static bool Url(string value,out Uri uri) {
             return Uri.TryCreate(value,UriKind.Absolute,out uri)&&(uri.Scheme=="https"||uri.Scheme=="http")&&
                 String.IsNullOrEmpty(uri.UserInfo)&&!String.IsNullOrEmpty(uri.Host);
         }

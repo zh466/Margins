@@ -159,7 +159,7 @@ namespace Polya {
         }
     }
 
-    sealed class Surface {
+    sealed partial class Surface {
         const int HistoryLimit=150;
         readonly Dictionary<Board,History> histories=new Dictionary<Board,History>();
         sealed class Edit { public Mark Before,After; public int At; public Edit[] Batch; }
@@ -168,6 +168,10 @@ namespace Polya {
         }
         public Board Board { get; private set; }
         public Mark Selected { get; private set; }
+        public Mark TextBeingEdited;
+        public RectangleF ScreenRect(RectangleF r) {
+            return new RectangleF(Area.X+Board.ViewX+r.X*Board.Zoom,Area.Y+Board.ViewY+r.Y*Board.Zoom,r.Width*Board.Zoom,r.Height*Board.Zoom);
+        }
         public RectangleF Area;
         public string Tool="select";
         public string Color="#5F43CD";
@@ -232,7 +236,7 @@ namespace Polya {
             if(raster!=null)raster.Reset(index,DrawMark);
         }
         public void Cancel() {
-            drag=null;stroke.Clear();erased.Clear();ghost=null;sealedSegments=0;
+            drag=null;stroke.Clear();pressures.Clear();erased.Clear();cuts.Clear();eraseTail.Clear();ghost=null;sealedSegments=0;
             foreach(var slice in drawnSlices)slice.Dispose();
             drawnSlices.Clear();
         }
@@ -259,7 +263,9 @@ namespace Polya {
             var edit=new Edit{Before=before,After=after,At=at};
             Push(edit); Apply(before,after,at);
         }
+        public int Revision {get;private set;}
         void Push(Edit edit) {
+            Revision++;
             var history=histories[Board];
             if(history.Undo.Count>=HistoryLimit) {
                 var keep=history.Undo.Take(HistoryLimit-1).Reverse().ToArray();
@@ -295,6 +301,14 @@ namespace Polya {
             else Apply(redo?edit.Before:edit.After,redo?edit.After:edit.Before,edit.At);
         }
         void ApplyErased(Edit[] batch,bool remove) {
+            if(batch[0].After!=null) {
+                foreach(var edit in batch) {
+                    var old=remove?edit.Before:edit.After; var next=remove?edit.After:edit.Before;
+                    Board.Marks[edit.At]=next;index.Replace(old,next);
+                    if(raster!=null) raster.Invalidate(VisualBounds(old));
+                }
+                Selected=null;if(Changed!=null) Changed();return;
+            }
             if(remove) {
                 var items=new HashSet<Mark>(batch.Select(e=>e.Before));
                 Board.Marks.RemoveAll(items.Contains);
@@ -314,6 +328,13 @@ namespace Polya {
             var sweep=RectangleF.FromLTRB(Math.Min(erasePoint.X,end.X),Math.Min(erasePoint.Y,end.Y),Math.Max(erasePoint.X,end.X),Math.Max(erasePoint.Y,end.Y));
             sweep.Inflate(radius,radius);
             foreach(var mark in index.Query(sweep)) {
+                if(drag=="pixel") {
+                    if(mark.Kind=="frame"||!VisualBounds(mark).IntersectsWith(sweep)) continue;
+                    List<float> strip;
+                    if(!cuts.TryGetValue(mark,out strip)) cuts[mark]=strip=new List<float>();
+                    strip.AddRange(new[]{erasePoint.X-mark.X,erasePoint.Y-mark.Y,end.X-mark.X,end.Y-mark.Y,radius});
+                    continue;
+                }
                 if(erased.Contains(mark))continue;
                 var bounds=VisualBounds(mark);
                 bounds.Inflate(radius,radius);
@@ -322,6 +343,10 @@ namespace Polya {
                     if(!bounds.Contains(p)||!Touches(mark,p,radius))continue;
                     erased.Add(mark);eraseDamage=Merge(eraseDamage,ScreenBounds(mark));break;
                 }
+            }
+            if(eraseTail.Count==0||Ink.Distance(eraseTail[eraseTail.Count-1],end)*Board.Zoom>=1) {
+                if(eraseTail.Count>=24) eraseTail.RemoveAt(0);
+                eraseTail.Add(end);
             }
             erasePoint=end;
         }
@@ -339,13 +364,17 @@ namespace Polya {
         public void OnDown(PointF position,bool pan,bool shift) {
             start=World(position);
             if(pan||Space||Tool=="hand") { drag="pan"; panStart=position; return; }
-            if(Tool=="eraser") { Selected=null; drag="eraser"; erasePoint=start; Sweep(start); return; }
+            if(IsEraser(Tool)) { Selected=null; drag=Tool; erasePoint=start; Sweep(start); return; }
             if(Tool=="select") {
+                var hit=Hit(start);
+                if(hit!=null&&hit.Kind=="trig"&&Ink.Distance(TrigPoint(hit),start)*Board.Zoom<16) {
+                    Selected=hit;ghost=hit.Copy();drag="trig-angle";return;
+                }
                 vertex=DiagramEdit.HandleAt(Selected,start,9/Board.Zoom);
                 if(vertex>=0) {
                     drag="vertex";ghost=Selected.Copy();DiagramEdit.BeginMove(ghost);return;
                 }
-                Selected=Hit(start);
+                Selected=hit;
                 if(Selected!=null) {
                     if(shift&&Selected.Kind=="link") { if(PreviewLink!=null) PreviewLink(Selected); return; }
                     drag="move"; ghost=Selected.Copy();
@@ -358,7 +387,7 @@ namespace Polya {
                 return;
             }
             Selected=null; drag=Tool;
-            if(drag=="pen") stroke.Add(start);
+            if(drag=="pen") {stroke.Add(start);pressures.Add(PenPressure);}
         }
         public void OnMove(PointF position,bool shift) {
             if(drag==null) return;
@@ -366,10 +395,20 @@ namespace Polya {
                 Board.ViewX+=position.X-panStart.X; Board.ViewY+=position.Y-panStart.Y; panStart=position; return;
             }
             PointF at=World(position);
-            if(drag=="eraser") { Sweep(at); return; }
+            if(IsEraser(drag)) { if(at!=erasePoint) Sweep(at); return; }
+            if(drag=="trig-angle") {
+                var center=TrigCenter(ghost);
+                double angle=Math.Atan2(center.Y-at.Y,at.X-center.X)*180/Math.PI;
+                ghost.Angle=(angle+360)%360;
+                if(shift)ghost.Angle=Math.Round(ghost.Angle/15)*15%360;
+                return;
+            }
             if(drag=="move") { ghost.X=Selected.X+at.X-start.X; ghost.Y=Selected.Y+at.Y-start.Y; return; }
             if(drag=="vertex") {if(Ink.Distance(at,start)*Board.Zoom>.8)DiagramEdit.Move(ghost,vertex,at,shift);return;}
-            if(drag=="pen") { if(Ink.Distance(at,stroke.Last())*Board.Zoom>=1.2) stroke.Add(at); return; }
+            if(drag=="pen") {
+                if(Ink.Distance(at,stroke[stroke.Count-1])*Board.Zoom>=(PenPressure<1?.45:1.0)) {stroke.Add(at);pressures.Add(PenPressure);}
+                return;
+            }
             if(drag=="line"||drag=="arrow") {
                 if(shift) {
                     double d=Ink.Distance(at,start), angle=Math.Round(Math.Atan2(at.Y-start.Y,at.X-start.X)/(Math.PI/4))*Math.PI/4;
@@ -404,22 +443,33 @@ namespace Polya {
         }
         public RectangleF Track(PointF position,bool shift) {
             if(drag=="pan") {OnMove(position,shift);return Area;}
-            var before=drag=="pen"?TailBounds():ScreenBounds(ghost);
+            var before=IsEraser(drag)?EraserBounds():drag=="pen"?TailBounds():ScreenBounds(ghost);
             eraseDamage=RectangleF.Empty;
             OnMove(position,shift);
-            return Merge(Merge(before,drag=="pen"?TailBounds():ScreenBounds(ghost)),eraseDamage);
+            return Merge(Merge(before,IsEraser(drag)?EraserBounds():drag=="pen"?TailBounds():ScreenBounds(ghost)),eraseDamage);
         }
         public void OnUp(PointF position,bool shift) {
             if(drag==null) return;
             OnMove(position,shift);
             if(drag=="eraser"&&erased.Count>0) {
-                var batch=Board.Marks.Select((m,i)=>new Edit{Before=m,At=i}).Where(e=>erased.Contains(e.Before)).ToArray();
+                var batch=Board.Marks.Select((m,i)=>erased.Contains(m)?new Edit{Before=m,At=i}:null).Where(e=>e!=null).ToArray();
                 Push(new Edit{Batch=batch}); ApplyErased(batch,true);
+            } else if(drag=="pixel"&&cuts.Count>0) {
+                var batch=Board.Marks.Select((before,i)=>cuts.ContainsKey(before)?new Edit{Before=before,At=i}:null)
+                    .Where(edit=>edit!=null).ToArray();
+                foreach(var edit in batch) {
+                    edit.After=edit.Before.Copy();
+                    edit.After.Cuts=(edit.Before.Cuts??new float[0]).Concat(cuts[edit.Before]).ToArray();
+                }
+                Push(new Edit{Batch=batch});ApplyErased(batch,true);
+            } else if(drag=="trig-angle") {
+                if(Ink.Distance(start,World(position))*Board.Zoom>1)Replace(Selected,ghost);
             } else if(drag=="vertex") {
                 if(Ink.Distance(start,World(position))*Board.Zoom>.8) Replace(Selected,ghost);
             } else if(drag=="move"&&Ink.Distance(start,World(position))*Board.Zoom>2) Replace(Selected,ghost);
             else if(drag=="pen") {
-                var mark=Ink.Finish(stroke,Color,Weight,Tidy);
+                var mark=Ink.Finish(stroke,Color,Weight,Tidy&&!PenContact);
+                if(mark.Kind=="ink"&&pressures.Any(p=>p<1)) mark.Pressure=pressures.ToArray();
                 SetStyle(mark); Add(mark);
             } else if(drag!="move"&&ghost!=null&&Math.Max(ghost.W,ghost.H)*Board.Zoom>3) {
                 if(!KeepTool) Tool="select";
@@ -435,6 +485,15 @@ namespace Polya {
             if(m.Kind=="link") { if(PreviewLink!=null) PreviewLink(m); }
             else if(m.Kind=="task") {if(RevealTask!=null)RevealTask(m);}
             else if(EditMark!=null) EditMark(m);
+        }
+        static PointF TrigCenter(Mark mark) {
+            return new PointF(mark.X+mark.W/2,mark.Y+44+(mark.H-83)/2);
+        }
+        static PointF TrigPoint(Mark mark) {
+            var center=TrigCenter(mark);
+            var r=Math.Max(0,Math.Min(mark.W-24,mark.H-83)/2-22);
+            var a=mark.Angle*Math.PI/180;
+            return new PointF(center.X+(float)Math.Cos(a)*r,center.Y-(float)Math.Sin(a)*r);
         }
         Mark Hit(PointF p) {
             float tolerance=7/Board.Zoom;
@@ -500,9 +559,11 @@ namespace Polya {
             } else if(ghost!=null) DrawMark(g,ghost,view);
             if(stroke.Count>0) {
                 var c=Fade(Art.ColorOf(Color,Art.Purple),Opacity);
-                if(stroke.Count==1) Art.Dot(g,c,stroke[0].X,stroke[0].Y,Weight/2);
+                if(stroke.Count==1) Art.Dot(g,c,stroke[0].X,stroke[0].Y,Weight*pressures[0]/2);
+                else if(PenContact||pressures[0]<1) DrawPressure(g,c,Weight,stroke,pressures,view);
                 else using(var p=StyledPen(c,Weight,Dash)) DrawLiveInk(g,p,view);
             }
+            DrawEraserTrail(g);
             var selection=drag=="move"||drag=="vertex"?ghost:Selected;
             if(selection!=null&&drag!="pen") {
                 var box=selection.Bounds; box.Inflate(5/Board.Zoom,5/Board.Zoom);
@@ -514,14 +575,16 @@ namespace Polya {
             g.Restore(state);
         }
         bool TransientIn(RectangleF view) {
-            if((drag=="move"||drag=="vertex")&&Selected!=null&&VisualBounds(Selected).IntersectsWith(view))return true;
+            if((drag=="move"||drag=="vertex"||drag=="trig-angle")&&Selected!=null&&VisualBounds(Selected).IntersectsWith(view))return true;
+            if(TextBeingEdited!=null&&VisualBounds(TextBeingEdited).IntersectsWith(view))return true;
+            if(drag=="pixel") foreach(var mark in cuts.Keys) if(VisualBounds(mark).IntersectsWith(view))return true;
             foreach(var mark in erased) if(VisualBounds(mark).IntersectsWith(view))return true;
             return false;
         }
         void DrawCommitted(Graphics g,RectangleF view) {
-            var visible=index.Query(view).Where(m=>!erased.Contains(m)&&((drag!="move"&&drag!="vertex")||Selected!=m)).ToArray();
-            foreach(var mark in visible) if(mark.Kind=="frame") DrawMark(g,mark,view);
-            foreach(var mark in visible) if(mark.Kind!="frame") DrawMark(g,mark,view);
+            var visible=index.Query(view).Where(m=>m!=TextBeingEdited&&((drag!="move"&&drag!="vertex"&&drag!="trig-angle")||Selected!=m)).ToArray();
+            foreach(var mark in visible) if(mark.Kind=="frame") DrawDuringErase(g,mark,view);
+            foreach(var mark in visible) if(mark.Kind!="frame") DrawDuringErase(g,mark,view);
         }
         static PointF[] Smooth(PointF[] points) {
             var a=points[0];
@@ -571,6 +634,11 @@ namespace Polya {
             return pen;
         }
         static void DrawMark(Graphics g,Mark m,RectangleF view) {
+            if(m.Cuts==null||m.Cuts.Length==0) {DrawMarkCore(g,m,view);return;}
+            var state=g.Save();
+            ApplyCuts(g,m,m.Cuts,view);DrawMarkCore(g,m,view);g.Restore(state);
+        }
+        static void DrawMarkCore(Graphics g,Mark m,RectangleF view) {
             int opacity=m.Opacity??100;
             var color=Fade(Art.ColorOf(m.Color,Art.Purple),opacity);
             float x=m.X,y=m.Y,w=m.W,h=m.H;
@@ -579,7 +647,8 @@ namespace Polya {
             if(m.Kind=="ink"||m.Kind=="line"||m.Kind=="arrow") {
                 if(m.Points==null||m.Points.Length==0) return;
                 var points=inkPoints.GetValue(m,MarkPoints);
-                if(points.Length==1) Art.Dot(g,color,x+m.Points[0],y+m.Points[1],m.Size/2);
+                if(points.Length==1) Art.Dot(g,color,x+m.Points[0],y+m.Points[1],m.Size*(m.Pressure==null?1:m.Pressure[0])/2);
+                else if(m.Pressure!=null) DrawPressure(g,color,m.Size,points,m.Pressure,view);
                 else using(var pen=StyledPen(color,m.Size,m.Dash)) {
                     if(m.Kind=="arrow") pen.CustomEndCap=new AdjustableArrowCap(4,5);
                     if(m.Kind=="ink") DrawInk(g,pen,points); else g.DrawLines(pen,points);
@@ -618,8 +687,10 @@ namespace Polya {
                 }
                 return;
             }
-            Art.Round(g,new RectangleF(x,y+3,w,h),12,System.Drawing.Color.FromArgb(12,35,29,68));
-            Art.Round(g,m.Bounds,12,m.Kind=="note"?Art.ColorOf(m.Color,Art.C("#FFF1C3")):Art.White,m.Kind=="note"?null:(Color?)Art.Line);
+            if(m.Kind=="note"||m.Kind=="link") {
+                Art.Round(g,new RectangleF(x,y+3,w,h),12,System.Drawing.Color.FromArgb(12,35,29,68));
+                Art.Round(g,m.Bounds,12,m.Kind=="note"?Art.ColorOf(m.Color,Art.C("#FFF1C3")):Art.White,m.Kind=="note"?null:(Color?)Art.Line);
+            }
             if(m.Kind=="link") {
                 Art.Round(g,new RectangleF(x+15,y+19,30,30),8,Art.Pale);
                 Art.Icon(g,"link",x+20,y+24,20,Art.Purple);

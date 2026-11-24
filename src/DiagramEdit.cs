@@ -300,28 +300,27 @@ namespace Polya {
             g.DrawLines(pen,new[]{new PointF(b.X-(float)(7*Math.Cos(t-.52)),b.Y-(float)(7*Math.Sin(t-.52))),b,
                 new PointF(b.X-(float)(7*Math.Cos(t+.52)),b.Y-(float)(7*Math.Sin(t+.52)))});
         }
-        public static Mark Properties(IWin32Window owner,Mark mark) {
-            if(IsCircuit(mark))return Circuits.Edit(owner,mark);
+        public static void Properties(Workspace owner,Mark mark,Action<Mark> done) {
+            if(IsCircuit(mark)){Circuits.Edit(owner,mark,done);return;}
             var copy=mark.Copy();
-            using(var sheet=new Sheet("Чертёж",HasPoints(mark)?"Вершины можно перетаскивать прямо на доске":"Поворот и размер рисунка",508,435)) {
-                var pane=sheet.Put(new DiagramPane{BackColor=Art.Paper},22,98,464,180);
-                pane.Render=(g,bounds)=>{var sample=copy.Copy();sample.X=6;sample.Y=6;sample.W=bounds.Width-12;sample.H=bounds.Height-12;Draw(g,sample);};
-                var rotation=sheet.Field(mark.Rotation.ToString("0.#"),22,312,106);
-                var scale=sheet.Field("100",148,312,106);
-                sheet.Caption("Поворот, °",22,287,106);sheet.Caption("Размер, %",148,287,106);
-                if(HasPoints(mark)) sheet.Action("Исходные точки",305,310,180,()=>{copy.DiagramPoints=null;pane.Invalidate();});
-                double angle=mark.Rotation,percent=100;
-                rotation.TextChanged+=(s,e)=>{if(Parse(rotation.Text,out angle)&&Math.Abs(angle)<=360) {copy.Rotation=(float)angle;pane.Invalidate();}};
-                sheet.Footer("Применить",()=>{
-                    if(!Parse(rotation.Text,out angle)||Math.Abs(angle)>360||!Parse(scale.Text,out percent)||percent<20||percent>500)
-                        return sheet.Error("Поворот до 360°, размер от 20 до 500 %.");
-                    copy.Rotation=(float)angle;
-                    copy.W=mark.W*(float)percent/100;copy.H=mark.H*(float)percent/100;
-                    copy.X=mark.X+(mark.W-copy.W)/2;copy.Y=mark.Y+(mark.H-copy.H)/2;
-                    return true;
-                });
-                return sheet.ShowDialog(owner)==DialogResult.OK?copy:null;
-            }
+            var sheet=new Sheet("Чертёж",HasPoints(mark)?"Вершины можно перетаскивать прямо на доске":"Поворот и размер рисунка",508,435);
+            var pane=sheet.Put(new DiagramPane{BackColor=Art.Paper},22,98,464,180);
+            pane.Render=(g,bounds)=>{var sample=copy.Copy();sample.X=6;sample.Y=6;sample.W=bounds.Width-12;sample.H=bounds.Height-12;Draw(g,sample);};
+            var rotation=sheet.Field(mark.Rotation.ToString("0.#"),22,312,106);
+            var scale=sheet.Field("100",148,312,106);
+            sheet.Caption("Поворот, °",22,287,106);sheet.Caption("Размер, %",148,287,106);
+            if(HasPoints(mark)) sheet.Action("Исходные точки",305,310,180,()=>{copy.DiagramPoints=null;pane.Invalidate();});
+            double angle=mark.Rotation,percent=100;
+            rotation.TextChanged+=(s,e)=>{if(Parse(rotation.Text,out angle)&&Math.Abs(angle)<=360) {copy.Rotation=(float)angle;pane.Invalidate();}};
+            sheet.Footer("Применить",()=>{
+                if(!Parse(rotation.Text,out angle)||Math.Abs(angle)>360||!Parse(scale.Text,out percent)||percent<20||percent>500)
+                    return sheet.Error("Поворот до 360°, размер от 20 до 500 %.");
+                copy.Rotation=(float)angle;
+                copy.W=mark.W*(float)percent/100;copy.H=mark.H*(float)percent/100;
+                copy.X=mark.X+(mark.W-copy.W)/2;copy.Y=mark.Y+(mark.H-copy.H)/2;
+                return true;
+            });
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?copy:null));
         }
         public static bool Parse(string text,out double value) {
             return Double.TryParse(text.Trim().Replace(',','.').Replace('−','-'),NumberStyles.Float,CultureInfo.InvariantCulture,out value)&&

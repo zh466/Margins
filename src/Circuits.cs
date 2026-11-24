@@ -140,8 +140,9 @@ namespace Polya {
                     break;
             }
         }
-        public static Mark Edit(IWin32Window owner,Mark mark) {
-            using(var sheet=new CircuitEditor(mark))return sheet.ShowDialog(owner)==DialogResult.OK?sheet.Result:null;
+        public static void Edit(Workspace owner,Mark mark,Action<Mark> done) {
+            var sheet=new CircuitEditor(mark);
+            sheet.OnBoard(owner,result=>done(result==DialogResult.OK?sheet.Result:null));
         }
         sealed class CircuitEditor : Sheet {
             readonly List<CircuitPart> items;
@@ -155,7 +156,7 @@ namespace Polya {
             int selected=-1,adding=-1;
             bool syncing;
             public Mark Result {get;private set;}
-            public CircuitEditor(Mark mark):base("Электрическая цепь","Последовательные соединения и до трёх параллельных ветвей",870,586) {
+            public CircuitEditor(Mark mark):base("Электрическая цепь","Последовательные соединения и до трёх параллельных ветвей",592,740) {
                 Result=mark.Copy();Result.Measurements=true;
                 items=Parts(mark).Select(p=>p.Copy()).ToList();Result.Circuit=items.ToArray();
                 int x=22;
@@ -165,8 +166,8 @@ namespace Polya {
                     tools[i]=Action("+ "+Names[i],x,97,widths[i],()=>ChooseTool(tool));
                     x+=widths[i]+5;
                 }
-                Action("Новая параллельная ветвь",581,97,267,AddBranch);
-                preview=Put(new DiagramPane{BackColor=Art.C("#F5F8FA"),AccessibleName="Схема цепи"},22,148,536,293);
+                Action("Новая параллельная ветвь",22,134,268,AddBranch);
+                preview=Put(new DiagramPane{BackColor=Art.C("#F5F8FA"),AccessibleName="Схема цепи"},22,176,548,282);
                 preview.Render=(g,r)=>{
                     hits.Clear();
                     var drawing=Result.Copy();drawing.Measurements=false;
@@ -174,27 +175,27 @@ namespace Polya {
                 };
                 preview.MouseMove+=(s,e)=>preview.Cursor=hits.Any(h=>h.Rect.Contains(e.Location))?Cursors.Hand:Cursors.Default;
                 preview.MouseClick+=(s,e)=>{if(e.Button==MouseButtons.Left)Pick(e.Location);};
-                selectedTitle=Caption("",581,150,261);
+                selectedTitle=Caption("",22,474,269);
                 selectedTitle.Font=new Font("Segoe UI",13,FontStyle.Bold);selectedTitle.ForeColor=Art.Ink;
-                selectedDetail=Caption("",581,177,267);
-                fieldLabel=Caption("",581,220,262);
-                value=Field("",581,245,267);
+                selectedDetail=Caption("",22,501,278);
+                fieldLabel=Caption("",22,534,246);
+                value=Field("",22,559,246);
                 value.TextChanged+=(s,e)=>ApplyValue();
-                branchLabel=Caption("Перенести в ветвь",581,280,262);
-                sourceButton=Action("Источник питания",581,392,267,()=>SelectPart(-1));
+                branchLabel=Caption("Перенести в ветвь",290,474,268);
+                sourceButton=Action("Источник питания",290,594,268,()=>SelectPart(-1));
                 for(int i=0;i<MaxBranch;i++) {
                     int branch=i;
-                    branches[i]=Action("Ветвь "+(i+1),581+i*90,305,87,()=>MoveBranch(branch));
+                    branches[i]=Action("Ветвь "+(i+1),290+i*90,501,87,()=>MoveBranch(branch));
                 }
-                switchButton=Action("",581,245,267,()=>{items[selected].Open=!items[selected].Open;RefreshEditor(true);});
-                cancelInsert=Action("Отменить добавление",581,225,267,()=>{adding=-1;RefreshEditor(true);});
-                earlier=Action("←",581,348,43,()=>MovePart(-1));earlier.AccessibleName="Переместить влево";
-                later=Action("→",630,348,43,()=>MovePart(1));later.AccessibleName="Переместить вправо";
-                remove=Action("Удалить",682,348,166,Remove);
-                summary=Caption("",22,451,826);summary.ForeColor=Accent;
-                hint=Caption("",22,482,826);hint.ForeColor=Art.Muted;
+                switchButton=Action("",22,559,246,()=>{items[selected].Open=!items[selected].Open;RefreshEditor(true);});
+                cancelInsert=Action("Отменить добавление",290,134,268,()=>{adding=-1;RefreshEditor(true);});
+                earlier=Action("←",290,550,43,()=>MovePart(-1));earlier.AccessibleName="Переместить влево";
+                later=Action("→",339,550,43,()=>MovePart(1));later.AccessibleName="Переместить вправо";
+                remove=Action("Удалить",391,550,167,Remove);
+                summary=Caption("",22,625,548);summary.ForeColor=Accent;
+                hint=Caption("",22,648,548);hint.ForeColor=Art.Muted;
                 Footer("Применить",()=>ValidateInput(true));
-                Shown+=(s,e)=>RefreshEditor(true);
+                RefreshEditor(true);
             }
             protected override bool ProcessCmdKey(ref Message message,Keys keyData) {
                 if(adding>=0&&keyData==Keys.Escape) {
