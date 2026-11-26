@@ -115,6 +115,7 @@ namespace Polya {
     sealed class SheetButton : Button {
         readonly bool primary;
         bool hovered;
+        public float DrawingScale=1;
         public SheetButton(string label,bool primary) {
             this.primary=primary;Text=label;Cursor=Cursors.Hand;FlatStyle=FlatStyle.Flat;
             BackColor=primary?Art.Purple:Art.White;ForeColor=primary?Art.White:Art.Ink;
@@ -124,9 +125,13 @@ namespace Polya {
         protected override void OnMouseLeave(EventArgs e) {base.OnMouseLeave(e);hovered=false;Invalidate();}
         protected override void OnPaint(PaintEventArgs e) {
             var g=e.Graphics;g.Clear(Parent==null?Art.White:Parent.BackColor);Art.Prepare(g);
+            var state=g.Save();
+            g.ScaleTransform(DrawingScale,DrawingScale);
+            float width=Width/DrawingScale,height=Height/DrawingScale;
             var fill=Enabled&&hovered?(primary?Art.C("#5236B7"):Art.Pale):BackColor;
-            Art.Round(g,new RectangleF(1,1,Width-2,Height-2),9,fill,Focused?Art.Purple:primary?(Color?)null:Art.Line);
-            Art.Label(g,Text,4,0,Width-8,Height,Text=="×"?21:13,Enabled?ForeColor:Art.Fade,true,StringAlignment.Center);
+            Art.Round(g,new RectangleF(1,1,width-2,height-2),9,fill,Focused?Art.Purple:primary?(Color?)null:Art.Line);
+            Art.Label(g,Text,4,0,width-8,height,Text=="×"?21:13,Enabled?ForeColor:Art.Fade,true,StringAlignment.Center);
+            g.Restore(state);
         }
     }
     sealed class DiagramPane : Panel {
@@ -292,13 +297,6 @@ namespace Polya {
             list.SelectedIndex=0; sheet.Footer("На доску",()=>list.SelectedIndex>=0);
             sheet.OnBoard(owner,result=>done(result==DialogResult.OK?rows[list.SelectedIndex]:null));
         }
-        public static bool Drive(IWin32Window owner) {
-            using(var sheet=new Sheet("Сохранение в Google Drive","Файл .polya можно сохранить в синхронизируемую папку",526,294)) {
-                sheet.Body("Если Google Диск для компьютеров подключён, выберите в окне сохранения Google Диск → Мой диск. Клиент Google синхронизирует файл.\n\nБез клиента сохраните файл на ПК, а затем загрузите его на drive.google.com.",22,102,482,124,true);
-                sheet.Footer("Выбрать папку",()=>true);
-                return sheet.ShowDialog(owner)==DialogResult.OK;
-            }
-        }
         public static void Help(IWin32Window owner) {
             using(var sheet=new Sheet("Горячие клавиши","Рисование, навигация и файлы",500,478)) {
                 sheet.Body("V — выбор                 H / Пробел — рука\nP — перо                   R — прямоугольник\nO — эллипс               A — стрелка         L — линия\nT — текст                 N — заметка          K — ссылка\nE — ластик объектов    Shift+E — пиксельный ластик\n1–8 — инструменты от выделения до текста     9 — заметка\nDel — удалить\nD — ромб                  Q — закрепить инструмент\n\nCtrl+Z — отмена        Ctrl+Y — повторить\nCtrl+D — дублировать выбранный объект\nКолесо — масштаб    0 — показать всю доску\nShift при рисовании — круг, квадрат или шаг 45°\nДвойной щелчок — редактирование или просмотр ссылки\n\nCtrl+S — сохранить      Ctrl+Shift+S — сохранить как\nCtrl+O — открыть         Ctrl+N — новая тетрадь\nF2 — переименовать доску\nПКМ по холсту — команды доски",22,103,456,301,true).BorderStyle=BorderStyle.None;
@@ -380,51 +378,6 @@ namespace Polya {
         static string Plain(string text) {
             var time=TimeSpan.FromMilliseconds(350);
             return Regex.Replace(WebUtility.HtmlDecode(Regex.Replace(text,"<[^>]+>"," ",HtmlOptions,time)),@"\s+"," ",HtmlOptions,time).Trim();
-        }
-    }
-    sealed class CalculatorWindow : Sheet {
-        readonly TextBox input,result;
-        readonly ComboBox units;
-        double ans;
-        public CalculatorWindow():base("Инженерный калькулятор","Выражения, степени, логарифмы и тригонометрия",489,515) {
-            input=Field("",22,106,445);input.Font=new Font("Consolas",14);
-            input.MaxLength=512;
-            result=Field("",22,144,445);result.ReadOnly=true;result.Font=new Font("Consolas",13);result.ForeColor=Art.Purple;
-            Caption("Единицы углов",22,182,155);
-            units=Put(new ComboBox{DropDownStyle=ComboBoxStyle.DropDownList},171,179,121,25);
-            units.Items.AddRange(new[]{"Радианы","Градусы"}); units.SelectedIndex=0;
-            Action("Копировать",355,177,112,()=>{if(!String.IsNullOrEmpty(result.Text)) Clipboard.SetText(result.Text);});
-            string[,] keys={{"sin","cos","tan","ln","log","√"},{"asin","acos","atan","abs","xʸ","n!"},
-                {"7","8","9","÷","(",")"},{"4","5","6","×","π","e"},{"1","2","3","−","Ans","⌫"},{"0",".","C","+","exp","="}};
-            for(int y=0;y<6;y++) for(int x=0;x<6;x++) {
-                string label=keys[y,x];
-                var button=Action(label,22+x*75,222+y*45,69,()=>Key(label),label=="=");
-                if(label=="=") AcceptButton=button;
-            }
-            ActiveControl=input;
-        }
-        void Key(string key) {
-            if(key=="=") {Calculate();return;}
-            if(key=="C") {input.Clear();result.Clear();input.Focus();return;}
-            if(key=="⌫") {
-                if(input.SelectionLength>0) input.SelectedText="";
-                else if(input.SelectionStart>0) {input.SelectionStart--;input.SelectionLength=1;input.SelectedText="";}
-                input.Focus();return;
-            }
-            string token=key;
-            switch(key) {
-                case "sin":case "cos":case "tan":case "asin":case "acos":case "atan":case "ln":case "log":case "abs":case "exp":token=key+"(";break;
-                case "√":token="sqrt(";break;case "xʸ":token="^";break;case "n!":token="!";break;
-            }
-            input.SelectedText=token;input.Focus();
-        }
-        void Calculate() {
-            try {
-                double value=Formula.Compile(input.Text,units.SelectedIndex==1,ans)(0);
-                if(Double.IsNaN(value)||Double.IsInfinity(value)) throw new FormatException("Результат вне области определения.");
-                ans=value; result.Text=value.ToString("G15",CultureInfo.InvariantCulture);
-            } catch(FormatException ex) {result.Text=ex.Message;}
-            input.Focus();
         }
     }
 }

@@ -42,16 +42,16 @@ namespace Polya {
             public Entry(string path,bool folder) {Path=path;Folder=folder;Name=System.IO.Path.GetFileName(path.TrimEnd('\\','/'));if(Name.Length==0)Name=path;}
         }
         readonly bool save;
-        readonly bool images;
+        readonly bool images,attachment;
         readonly TextBox address,name;
         readonly ListBox listing;
         readonly Label message;
         string directory;
         int revision;
         public string Chosen {get;private set;}
-        FileSheet(bool saving,string initial,string suggested,bool images=false):base(images?"Вставить изображение":saving?"Сохранить тетрадь":"Открыть тетрадь",
-            images?"Выберите файл PNG или JPEG":"Файлы .polya на компьютере и подключённых дисках",690,554) {
-            save=saving;this.images=images;
+        FileSheet(bool saving,string initial,string suggested,bool images=false,bool attachment=false):base(attachment?"Сохранить вложение":images?"Вставить изображение":saving?"Сохранить тетрадь":"Открыть тетрадь",
+            attachment?"Выберите папку и имя файла":images?"Выберите файл PNG или JPEG":"Файлы .polya на компьютере и подключённых дисках",690,554) {
+            save=saving;this.images=images;this.attachment=attachment;
             var documents=Environment.GetFolderPath(Environment.SpecialFolder.MyDocuments);
             if(String.IsNullOrEmpty(documents)||!Directory.Exists(documents)) documents=Environment.CurrentDirectory;
             Action("Документы",22,98,113,()=>Go(documents));
@@ -107,13 +107,13 @@ namespace Polya {
         }
         bool Matches(string file) {
             string ext=Path.GetExtension(file).ToLowerInvariant();
-            return images?ext==".png"||ext==".jpg"||ext==".jpeg":ext==".polya";
+            return attachment|| (images?ext==".png"||ext==".jpg"||ext==".jpeg":ext==".polya");
         }
         Entry[] Entries(string location) {
             if(location==null) return Directory.GetLogicalDrives().Select(path=>new Entry(path,true)).ToArray();
             var dirs=Directory.EnumerateDirectories(location).Take(1000).OrderBy(Path.GetFileName,StringComparer.CurrentCultureIgnoreCase)
                 .Select(path=>new Entry(path,true));
-            var files=Directory.EnumerateFiles(location,images?"*":"*.polya").Where(Matches)
+            var files=Directory.EnumerateFiles(location,images||attachment?"*":"*.polya").Where(Matches)
                 .Take(1500).OrderBy(Path.GetFileName,StringComparer.CurrentCultureIgnoreCase).Select(path=>new Entry(path,false));
             return dirs.Concat(files).Take(1500).ToArray();
         }
@@ -137,7 +137,7 @@ namespace Polya {
                 if(directory==null&&!Path.IsPathRooted(value)) {message.Text="Сначала выберите диск и папку.";return false;}
                 string combined=Path.GetFullPath(Path.IsPathRooted(value)?value:Path.Combine(directory,value));
                 if(Directory.Exists(combined)) {Go(combined);return false;}
-                if(save&&!Path.GetExtension(combined).Equals(".polya",StringComparison.OrdinalIgnoreCase)) combined+=".polya";
+                if(save&&!attachment&&!Path.GetExtension(combined).Equals(".polya",StringComparison.OrdinalIgnoreCase)) combined+=".polya";
                 if(images&&!Matches(combined)) {message.Text="Выберите файл PNG или JPEG.";return false;}
                 if(!save&&!File.Exists(combined)) {message.Text="Файл не найден.";return false;}
                 if(save&&!Directory.Exists(Path.GetDirectoryName(combined))) {message.Text="Папка для сохранения недоступна.";return false;}
@@ -147,6 +147,9 @@ namespace Polya {
         }
         public static string Pick(IWin32Window owner,bool save,string initial,string suggested) {
             using(var sheet=new FileSheet(save,initial,suggested)) return sheet.ShowDialog(owner)==DialogResult.OK?sheet.Chosen:null;
+        }
+        public static string SaveAttachment(IWin32Window owner,string name) {
+            using(var sheet=new FileSheet(true,null,name,attachment:true))return sheet.ShowDialog(owner)==DialogResult.OK?sheet.Chosen:null;
         }
         public static string PickImage(IWin32Window owner) {
             using(var sheet=new FileSheet(false,null,null,true)) return sheet.ShowDialog(owner)==DialogResult.OK?sheet.Chosen:null;

@@ -162,13 +162,13 @@ namespace Polya {
     sealed partial class Surface {
         const int HistoryLimit=150;
         readonly Dictionary<Board,History> histories=new Dictionary<Board,History>();
-        sealed class Edit { public Mark Before,After; public int At; public Edit[] Batch; }
+        sealed class Edit { public Mark Before,After; public int At; public Edit[] Batch; public RectangleF Damage; }
         sealed class History {
             public readonly Stack<Edit> Undo=new Stack<Edit>(), Redo=new Stack<Edit>();
         }
         public Board Board { get; private set; }
         public Mark Selected { get; private set; }
-        public Mark TextBeingEdited;
+        public Mark TextBeingEdited, ActiveBrowserMark;
         public RectangleF ScreenRect(RectangleF r) {
             return new RectangleF(Area.X+Board.ViewX+r.X*Board.Zoom,Area.Y+Board.ViewY+r.Y*Board.Zoom,r.Width*Board.Zoom,r.Height*Board.Zoom);
         }
@@ -209,6 +209,7 @@ namespace Polya {
                 ready.Width*Board.Zoom,ready.Height*Board.Zoom);
         }
         readonly List<PointF> stroke=new List<PointF>();
+        bool pressurePreview;
         sealed class StrokeSlice : IDisposable {
             public readonly GraphicsPath Path;
             public readonly RectangleF Bounds;
@@ -227,6 +228,8 @@ namespace Polya {
         public bool CanUndo { get { return histories[Board].Undo.Count>0; } }
         public bool CanRedo { get { return histories[Board].Redo.Count>0; } }
         public bool Dragging { get { return drag!=null; } }
+        public bool Inking {get {return drag=="pen";}}
+        public RectangleF StrokeDamage {get;private set;}
         public void Reset() { histories.Clear(); }
         public void Forget(Board board) { histories.Remove(board); }
         public void Bind(Board board) {
@@ -236,9 +239,11 @@ namespace Polya {
             if(raster!=null)raster.Reset(index,DrawMark);
         }
         public void Cancel() {
-            drag=null;stroke.Clear();pressures.Clear();erased.Clear();cuts.Clear();eraseTail.Clear();ghost=null;sealedSegments=0;
+            drag=null;stroke.Clear();pressures.Clear();pressurePreview=false;erased.Clear();cuts.Clear();eraseTail.Clear();pixelDamage=RectangleF.Empty;ghost=null;sealedSegments=0;
             foreach(var slice in drawnSlices)slice.Dispose();
             drawnSlices.Clear();
+            foreach(var slice in pressureSlices)slice.Dispose();
+            pressureSlices.Clear();pressureSealed=0;
         }
         public PointF World(PointF pointer) { return new PointF((pointer.X-Area.X-Board.ViewX)/Board.Zoom,(pointer.Y-Area.Y-Board.ViewY)/Board.Zoom); }
         public PointF Center() { return World(new PointF(Area.X+Area.Width/2,Area.Y+Area.Height/2)); }
@@ -285,7 +290,14 @@ namespace Polya {
                 if(before!=null)raster.Invalidate(VisualBounds(before));
                 if(after!=null)raster.Invalidate(VisualBounds(after));
             }
-            Selected=after; if(Changed!=null) Changed();
+            Selected=after;
+            if(Inking) {
+                var raw=new RectangleF(stroke.Min(p=>p.X),stroke.Min(p=>p.Y),
+                    stroke.Max(p=>p.X)-stroke.Min(p=>p.X),stroke.Max(p=>p.Y)-stroke.Min(p=>p.Y));
+                raw.Inflate((16+Weight*Board.Zoom)/Board.Zoom,(16+Weight*Board.Zoom)/Board.Zoom);
+                StrokeDamage=Merge(ScreenBounds(after),ScreenRect(raw));
+            }
+            if(Changed!=null) Changed();
         }
         void Rebuild() {
             index=new SpatialIndex(); foreach(var mark in Board.Marks) index.Add(mark);
@@ -297,16 +309,16 @@ namespace Polya {
             var from=redo?history.Redo:history.Undo;
             if(from.Count==0) return;
             var edit=from.Pop(); (redo?history.Undo:history.Redo).Push(edit);
-            if(edit.Batch!=null) ApplyErased(edit.Batch,redo);
+            if(edit.Batch!=null) ApplyErased(edit.Batch,redo,edit.Damage);
             else Apply(redo?edit.Before:edit.After,redo?edit.After:edit.Before,edit.At);
         }
-        void ApplyErased(Edit[] batch,bool remove) {
+        void ApplyErased(Edit[] batch,bool remove,RectangleF damage) {
             if(batch[0].After!=null) {
                 foreach(var edit in batch) {
                     var old=remove?edit.Before:edit.After; var next=remove?edit.After:edit.Before;
                     Board.Marks[edit.At]=next;index.Replace(old,next);
-                    if(raster!=null) raster.Invalidate(VisualBounds(old));
                 }
+                if(raster!=null&&!damage.IsEmpty)raster.Invalidate(damage);
                 Selected=null;if(Changed!=null) Changed();return;
             }
             if(remove) {
@@ -328,11 +340,14 @@ namespace Polya {
             var sweep=RectangleF.FromLTRB(Math.Min(erasePoint.X,end.X),Math.Min(erasePoint.Y,end.Y),Math.Max(erasePoint.X,end.X),Math.Max(erasePoint.Y,end.Y));
             sweep.Inflate(radius,radius);
             foreach(var mark in index.Query(sweep)) {
+                if(mark==ActiveBrowserMark)continue;
                 if(drag=="pixel") {
                     if(mark.Kind=="frame"||!VisualBounds(mark).IntersectsWith(sweep)) continue;
                     List<float> strip;
                     if(!cuts.TryGetValue(mark,out strip)) cuts[mark]=strip=new List<float>();
                     strip.AddRange(new[]{erasePoint.X-mark.X,erasePoint.Y-mark.Y,end.X-mark.X,end.Y-mark.Y,radius});
+                    eraseDamage=Merge(eraseDamage,ScreenRect(sweep));
+                    pixelDamage=Merge(pixelDamage,sweep);
                     continue;
                 }
                 if(erased.Contains(mark))continue;
@@ -344,10 +359,7 @@ namespace Polya {
                     erased.Add(mark);eraseDamage=Merge(eraseDamage,ScreenBounds(mark));break;
                 }
             }
-            if(eraseTail.Count==0||Ink.Distance(eraseTail[eraseTail.Count-1],end)*Board.Zoom>=1) {
-                if(eraseTail.Count>=24) eraseTail.RemoveAt(0);
-                eraseTail.Add(end);
-            }
+            AddTrail(end);
             erasePoint=end;
         }
         public void Add(Mark mark) { Record(null,mark,Board.Marks.Count); }
@@ -364,6 +376,7 @@ namespace Polya {
         public void OnDown(PointF position,bool pan,bool shift) {
             start=World(position);
             if(pan||Space||Tool=="hand") { drag="pan"; panStart=position; return; }
+            if(Tool=="laser") {Selected=null;drag="laser";AddTrail(start);return;}
             if(IsEraser(Tool)) { Selected=null; drag=Tool; erasePoint=start; Sweep(start); return; }
             if(Tool=="select") {
                 var hit=Hit(start);
@@ -387,7 +400,7 @@ namespace Polya {
                 return;
             }
             Selected=null; drag=Tool;
-            if(drag=="pen") {stroke.Add(start);pressures.Add(PenPressure);}
+            if(drag=="pen") {stroke.Add(start);pressures.Add(PenContact?PenPressure:.88f);pressurePreview=PenContact;}
         }
         public void OnMove(PointF position,bool shift) {
             if(drag==null) return;
@@ -395,6 +408,7 @@ namespace Polya {
                 Board.ViewX+=position.X-panStart.X; Board.ViewY+=position.Y-panStart.Y; panStart=position; return;
             }
             PointF at=World(position);
+            if(drag=="laser"){AddTrail(at);return;}
             if(IsEraser(drag)) { if(at!=erasePoint) Sweep(at); return; }
             if(drag=="trig-angle") {
                 var center=TrigCenter(ghost);
@@ -406,7 +420,16 @@ namespace Polya {
             if(drag=="move") { ghost.X=Selected.X+at.X-start.X; ghost.Y=Selected.Y+at.Y-start.Y; return; }
             if(drag=="vertex") {if(Ink.Distance(at,start)*Board.Zoom>.8)DiagramEdit.Move(ghost,vertex,at,shift);return;}
             if(drag=="pen") {
-                if(Ink.Distance(at,stroke[stroke.Count-1])*Board.Zoom>=(PenPressure<1?.45:1.0)) {stroke.Add(at);pressures.Add(PenPressure);}
+                double distance=Ink.Distance(at,stroke[stroke.Count-1])*Board.Zoom;
+                if(distance>=(PenContact?.45:1.0)) {
+                    float force=PenPressure;
+                    if(!PenContact&&String.IsNullOrEmpty(Dash)) {
+                        float target=.98f-.26f*(float)Math.Min(1,(distance-1)/13);
+                        force=.72f*pressures[pressures.Count-1]+.28f*target;
+                    }
+                    stroke.Add(at);pressures.Add(force);
+                    pressurePreview|=force<1;
+                }
                 return;
             }
             if(drag=="line"||drag=="arrow") {
@@ -443,17 +466,17 @@ namespace Polya {
         }
         public RectangleF Track(PointF position,bool shift) {
             if(drag=="pan") {OnMove(position,shift);return Area;}
-            var before=IsEraser(drag)?EraserBounds():drag=="pen"?TailBounds():ScreenBounds(ghost);
+            var before=HasTrail?EraserBounds():drag=="pen"?TailBounds():ScreenBounds(ghost);
             eraseDamage=RectangleF.Empty;
             OnMove(position,shift);
-            return Merge(Merge(before,IsEraser(drag)?EraserBounds():drag=="pen"?TailBounds():ScreenBounds(ghost)),eraseDamage);
+            return Merge(Merge(before,HasTrail?EraserBounds():drag=="pen"?TailBounds():ScreenBounds(ghost)),eraseDamage);
         }
         public void OnUp(PointF position,bool shift) {
             if(drag==null) return;
             OnMove(position,shift);
             if(drag=="eraser"&&erased.Count>0) {
                 var batch=Board.Marks.Select((m,i)=>erased.Contains(m)?new Edit{Before=m,At=i}:null).Where(e=>e!=null).ToArray();
-                Push(new Edit{Batch=batch}); ApplyErased(batch,true);
+                Push(new Edit{Batch=batch}); ApplyErased(batch,true,RectangleF.Empty);
             } else if(drag=="pixel"&&cuts.Count>0) {
                 var batch=Board.Marks.Select((before,i)=>cuts.ContainsKey(before)?new Edit{Before=before,At=i}:null)
                     .Where(edit=>edit!=null).ToArray();
@@ -461,7 +484,7 @@ namespace Polya {
                     edit.After=edit.Before.Copy();
                     edit.After.Cuts=(edit.Before.Cuts??new float[0]).Concat(cuts[edit.Before]).ToArray();
                 }
-                Push(new Edit{Batch=batch});ApplyErased(batch,true);
+                Push(new Edit{Batch=batch,Damage=pixelDamage});ApplyErased(batch,true,pixelDamage);
             } else if(drag=="trig-angle") {
                 if(Ink.Distance(start,World(position))*Board.Zoom>1)Replace(Selected,ghost);
             } else if(drag=="vertex") {
@@ -469,7 +492,7 @@ namespace Polya {
             } else if(drag=="move"&&Ink.Distance(start,World(position))*Board.Zoom>2) Replace(Selected,ghost);
             else if(drag=="pen") {
                 var mark=Ink.Finish(stroke,Color,Weight,Tidy&&!PenContact);
-                if(mark.Kind=="ink"&&pressures.Any(p=>p<1)) mark.Pressure=pressures.ToArray();
+                if(mark.Kind=="ink"&&String.IsNullOrEmpty(Dash)&&pressures.Any(p=>p<1)) mark.Pressure=pressures.ToArray();
                 SetStyle(mark); Add(mark);
             } else if(drag!="move"&&ghost!=null&&Math.Max(ghost.W,ghost.H)*Board.Zoom>3) {
                 if(!KeepTool) Tool="select";
@@ -497,7 +520,7 @@ namespace Polya {
         }
         Mark Hit(PointF p) {
             float tolerance=7/Board.Zoom;
-            return index.Query(new RectangleF(p.X-tolerance,p.Y-tolerance,tolerance*2,tolerance*2)).Reverse().FirstOrDefault(m=>Touches(m,p,tolerance));
+            return index.Query(new RectangleF(p.X-tolerance,p.Y-tolerance,tolerance*2,tolerance*2)).Reverse().FirstOrDefault(m=>m!=ActiveBrowserMark&&Touches(m,p,tolerance));
         }
         static bool Touches(Mark m,PointF p,float tolerance) {
                 if(m.Kind=="ink"||m.Kind=="arrow"||m.Kind=="line") {
@@ -515,7 +538,8 @@ namespace Polya {
                 if(m.Kind=="frame"&&rect.Contains(p)) return p.Y<m.Y+38||p.Y>m.Y+m.H-tolerance||p.X<m.X+tolerance||p.X>m.X+m.W-tolerance;
                 return rect.Contains(p);
         }
-        public void Draw(Graphics g) {
+        public void Draw(Graphics g) {Draw(g,true);}
+        public void Draw(Graphics g,bool paintPaper) {
             var state=g.Save();
             g.SetClip(Area,CombineMode.Intersect);
             var clip=RectangleF.Intersect(Area,g.VisibleClipBounds);
@@ -525,9 +549,9 @@ namespace Polya {
             float spacing=(pattern=="grid"?11:22)*Board.Zoom;
             while(spacing<(pattern=="grid"?8:12)) spacing*=2;
             while(spacing>62) spacing/=2;
-            if(pattern=="grid")grid.Draw(g,clip,paper,spacing,Area.X+Board.ViewX,Area.Y+Board.ViewY);
-            else Art.Fill(g,paper,clip);
-            if(pattern=="dots"||pattern=="ruled") {
+            if(paintPaper&&pattern=="grid")grid.Draw(g,Area,clip,paper,spacing,Area.X+Board.ViewX,Area.Y+Board.ViewY);
+            else if(paintPaper) Art.Fill(g,paper,clip);
+            if(paintPaper&&(pattern=="dots"||pattern=="ruled")) {
                 using(var dots=new SolidBrush(Art.C("#D3D7DF"))) {
                     float left=Area.Left+Board.ViewX;
                     float top=Area.Top+Board.ViewY;
@@ -560,12 +584,12 @@ namespace Polya {
             if(stroke.Count>0) {
                 var c=Fade(Art.ColorOf(Color,Art.Purple),Opacity);
                 if(stroke.Count==1) Art.Dot(g,c,stroke[0].X,stroke[0].Y,Weight*pressures[0]/2);
-                else if(PenContact||pressures[0]<1) DrawPressure(g,c,Weight,stroke,pressures,view);
+                else if(pressurePreview&&String.IsNullOrEmpty(Dash)) DrawLivePressure(g,c,view);
                 else using(var p=StyledPen(c,Weight,Dash)) DrawLiveInk(g,p,view);
             }
             DrawEraserTrail(g);
             var selection=drag=="move"||drag=="vertex"?ghost:Selected;
-            if(selection!=null&&drag!="pen") {
+            if(Tool=="select"&&selection!=null&&selection!=ActiveBrowserMark&&selection!=TextBeingEdited&&drag!="pen") {
                 var box=selection.Bounds; box.Inflate(5/Board.Zoom,5/Board.Zoom);
                 using(var pen=Art.Pen(Art.Purple,1.2f/Board.Zoom)) {
                     pen.DashStyle=DashStyle.Dash; g.DrawRectangle(pen,box.X,box.Y,box.Width,box.Height);
@@ -576,13 +600,14 @@ namespace Polya {
         }
         bool TransientIn(RectangleF view) {
             if((drag=="move"||drag=="vertex"||drag=="trig-angle")&&Selected!=null&&VisualBounds(Selected).IntersectsWith(view))return true;
+            if(ActiveBrowserMark!=null&&VisualBounds(ActiveBrowserMark).IntersectsWith(view))return true;
             if(TextBeingEdited!=null&&VisualBounds(TextBeingEdited).IntersectsWith(view))return true;
-            if(drag=="pixel") foreach(var mark in cuts.Keys) if(VisualBounds(mark).IntersectsWith(view))return true;
+            if(drag=="pixel"&&PixelChanged(view))return true;
             foreach(var mark in erased) if(VisualBounds(mark).IntersectsWith(view))return true;
             return false;
         }
         void DrawCommitted(Graphics g,RectangleF view) {
-            var visible=index.Query(view).Where(m=>m!=TextBeingEdited&&((drag!="move"&&drag!="vertex"&&drag!="trig-angle")||Selected!=m)).ToArray();
+            var visible=index.Query(view).Where(m=>m!=TextBeingEdited&&m!=ActiveBrowserMark&&((drag!="move"&&drag!="vertex"&&drag!="trig-angle")||Selected!=m)).ToArray();
             foreach(var mark in visible) if(mark.Kind=="frame") DrawDuringErase(g,mark,view);
             foreach(var mark in visible) if(mark.Kind!="frame") DrawDuringErase(g,mark,view);
         }
@@ -687,24 +712,41 @@ namespace Polya {
                 }
                 return;
             }
-            if(m.Kind=="note"||m.Kind=="link") {
+            if(m.Kind=="note"||m.Kind=="link"||m.Kind=="attachment") {
                 Art.Round(g,new RectangleF(x,y+3,w,h),12,System.Drawing.Color.FromArgb(12,35,29,68));
                 Art.Round(g,m.Bounds,12,m.Kind=="note"?Art.ColorOf(m.Color,Art.C("#FFF1C3")):Art.White,m.Kind=="note"?null:(Color?)Art.Line);
             }
+            if(m.Kind=="attachment") {
+                Art.Icon(g,"open",x+14,y+18,22,Art.Purple);
+                Art.Label(g,m.Title,x+48,y+13,w-63,27,15,Art.Ink,true);
+                Art.Label(g,"Двойной щелчок для сохранения файла",x+48,y+40,w-63,22,12,Art.Muted);
+                return;
+            }
             if(m.Kind=="link") {
+                if(m.PinnedWeb) {
+                    Art.Stroke(g,Art.Line,1,x,y+57,x+w,y+57);
+                    Art.Label(g,"Страница прикреплена · двойной щелчок — открыть",x+16,y+64,w-32,26,13,Art.Purple);
+                    if(!String.IsNullOrEmpty(m.WebImage)&&w>32&&h>105)
+                        DrawPinnedPage(g,m,new RectangleF(x+12,y+94,w-24,h-106));
+
+                }
                 Art.Round(g,new RectangleF(x+15,y+19,30,30),8,Art.Pale);
                 Art.Icon(g,"link",x+20,y+24,20,Art.Purple);
                 Art.Icon(g,"external",x+w-36,y+23,17,Art.Muted);
                 Art.Label(g,m.Title,x+53,y+16,w-92,26,14,Art.Ink,true);
                 Uri uri; string site=Uri.TryCreate(m.Text,UriKind.Absolute,out uri)?uri.Host:m.Text;
                 Art.Label(g,site,x+53,y+40,w-67,20,11,Art.Muted);
-                Art.Label(g,"Двойной щелчок для просмотра",x+16,y+65,w-32,16,10,Art.Purple);
+                if(!m.PinnedWeb)Art.Label(g,"Двойной щелчок для просмотра",x+16,y+65,w-32,16,10,Art.Purple);
                 return;
             }
-            bool note=m.Kind=="note";
+            DrawBoardText(g,m,view,100);
+        }
+        static void DrawBoardText(Graphics g,Mark mark,RectangleF view,int opacity) {
+            bool note=mark.Kind=="note";
             float padX=note?19:21;
-            if(!String.IsNullOrEmpty(m.Title)) Art.Label(g,m.Title,x+padX,y+13,w-padX*2,28,note?16:17,Art.Ink,true);
-            TextLayout.Draw(g,m,x+padX,y+(String.IsNullOrEmpty(m.Title)?17:49),w-padX*2,view,Art.Muted);
+            if(!String.IsNullOrEmpty(mark.Title))
+                Art.Label(g,mark.Title,mark.X+padX,mark.Y+13,mark.W-padX*2,28,note?16:17,Fade(Art.Ink,opacity),true);
+            TextLayout.Draw(g,mark,mark.X+padX,mark.Y+(String.IsNullOrEmpty(mark.Title)?17:49),mark.W-padX*2,view,Fade(Art.Muted,opacity));
         }
     }
 }

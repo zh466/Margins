@@ -124,27 +124,32 @@ namespace Polya {
             Button(g,R(14,16,38,38),"menu",null,()=>TogglePopup("main"),"Меню доски",active:popup=="main");
             float right=screenW-14;
             Button(g,R(right-38,16,38,38),"other",null,()=>TogglePopup("boards"),"Доски тетради",active:popup=="boards");
-            if(screenW<1090) {
+            if(screenW<1200) {
+                Button(g,R(right-176,16,38,38),"spark",null,()=>TogglePopup("study"),"Учебные инструменты",active:popup=="study");
                 Button(g,R(right-84,16,38,38),"save",null,()=>Save(false),"Сохранить · Ctrl+S",true);
                 Button(g,R(right-130,16,38,38),"frame",null,()=>TogglePopup("lesson"),"Урок",active:popup=="lesson");
                 return;
             }
-            Button(g,R(right-166,16,120,38),"save","Сохранить",()=>Save(false),"Ctrl+S",true);
+            Button(g,R(right-314,16,38,38),"spark",null,()=>TogglePopup("study"),"Учебные инструменты",active:popup=="study");
+            Button(g,R(right-166,16,88,38),null,"Сохранить",()=>Save(false),"Сохранить · Ctrl+S",true);
+            Button(g,R(right-75,16,29,38),"external",null,Drive,"Сохранить в Google Диск · Ctrl+Shift+D");
             Button(g,R(right-268,16,94,38),"frame","Урок",()=>TogglePopup("lesson"),"Кадры, задания и таймер",active:popup=="lesson");
         }
         void DrawBoardMenu(Graphics g) {
-            var r=R(14,60,300,441);
+            var r=R(14,60,300,512);
             PopupBase(g,r,surface.Board.Name);
             PopupRow(g,R(21,99,286,34),"back","К предметам",()=>Navigate(ScreenPage.Subjects));
             Art.Stroke(g,Art.Line,1,24,140,304,140);
             PopupRow(g,R(21,147,286,34),"open","Открыть тетрадь",OpenNotebook);
             PopupRow(g,R(21,181,286,34),"plus","Новая тетрадь",NewNotebook);
             PopupRow(g,R(21,215,286,34),"save","Сохранить как…",()=>Save(true));
-            PopupRow(g,R(21,249,286,34),"external","Сохранить в Google Drive",Drive);
+            PopupRow(g,R(21,249,286,34),"external","Сохранить в Google Диск · Ctrl+Shift+D",Drive);
             PopupRow(g,R(21,283,286,34),"help","Справка и горячие клавиши",Help);
             Art.Stroke(g,Art.Line,1,24,324,304,324);
             PopupRow(g,R(21,330,286,34),"settings","Фон и разметка",()=>TogglePopup("background"));
-            Palette(g,14,382,"Цвет холста",new[]{"#FFFFFF","#F8F9FB","#FFF8E7","#EDF7F3","#EBF3FB","#F3ECFA"},
+            PopupRow(g,R(21,367,286,33),"pen","Графический планшет",ConfigureTablet);
+            PopupRow(g,R(21,401,286,33),"settings","Настройки Google Диска",()=>ConfigureDrive(false));
+            Palette(g,14,453,"Цвет холста",new[]{"#FFFFFF","#F8F9FB","#FFF8E7","#EDF7F3","#EBF3FB","#F3ECFA"},
                 surface.Board.Background??"#FFFFFF",chosen=>{surface.Board.Background=chosen;MarkSettings();});
             Art.Label(g,dirty?"Есть изменения":path==null?"Локальная доска":"Тетрадь сохранена",26,459,272,28,12,Art.Muted);
         }

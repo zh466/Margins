@@ -258,7 +258,7 @@ namespace Polya {
             surface.Focus(frame.Bounds, presenting?54:100,presenting?100:146);
         }
         void StartPresentation() {
-            CloseCanvasPanel();
+            CloseCanvasPanel();CloseBrowser();
             if(presenting)return;
             lessonFrames=Frames();
             virtualSlide=lessonFrames.Length==0;

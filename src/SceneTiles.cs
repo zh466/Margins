@@ -156,7 +156,7 @@ namespace Polya {
                         Tile old;
                         if(tiles.TryGetValue(oldKey,out old)&&old.Ready&&!old.ShowVector) {old.Use=++tick;AddPatch(patches,old,visible);found=true;}
                     }
-                    if(!found)AddPatch(patches,tile,RectangleF.Empty);
+                    if(!found) {if(tile.Image==null)vector.Add(visible);else AddPatch(patches,tile,RectangleF.Empty);}
                 }
             }
             compositor.Draw(g,patches,view,Source);

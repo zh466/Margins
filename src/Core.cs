@@ -25,6 +25,14 @@ namespace Polya {
         public float Size { get; set; }
         public float[] Points { get; set; }
         public float[] Cuts { get; set; }
+        public bool PinnedWeb { get; set; }
+        public float? BrowserWidth { get; set; }
+        public float? BrowserHeight { get; set; }
+        public double? BrowserPageZoom {get;set;}
+        public Dictionary<string,float[][]> PageAnnotations {get;set;}
+        public Dictionary<string,Mark[]> WebStrokes {get;set;}
+        public float[][] WebInk { get; set; }
+        public string WebImage { get; set; }
         public float[] Pressure { get; set; }
         public double From { get; set; }
         public double To { get; set; }
@@ -58,6 +66,12 @@ namespace Polya {
         public static Board Make(string name, string subject) { return new Board { Name=name, Subject=subject, Marks=new List<Mark>(), Zoom=1 }; }
     }
     public class Notebook {
+        public string Id {get;set;}
+        public string GetId() {
+            Guid guid;
+            if(!Guid.TryParseExact(Id,"N",out guid))Id=Guid.NewGuid().ToString("N");
+            return Id;
+        }
         public int Version { get; set; }
         public List<Board> Boards { get; set; }
         public int Active { get; set; }
@@ -67,7 +81,7 @@ namespace Polya {
         public static Notebook Read(string path) {
             var doc=Serializer().Deserialize<Notebook>(File.ReadAllText(path));
             if(doc==null || doc.Version!=1 || doc.Boards==null || doc.Boards.Count==0) throw new FormatException("Этот файл не является доской Поля версии 1.");
-            var kinds=new HashSet<string>{"heading","text","note","link","graph","trig","ink","ellipse","rect","diamond","line","arrow","diagram","frame","task","image"};
+            var kinds=new HashSet<string>{"heading","text","note","link","graph","trig","ink","ellipse","rect","diamond","line","arrow","diagram","frame","task","image","attachment"};
             foreach(var board in doc.Boards) {
                 if(board==null || board.Marks==null || String.IsNullOrWhiteSpace(board.Name) || !Finite(board.ViewX) || !Finite(board.ViewY)) throw new FormatException("Не удалось прочитать данные доски.");
                 if(board.Zoom<.15f || board.Zoom>4 || !Finite(board.Zoom)) board.Zoom=1;
@@ -79,6 +93,21 @@ namespace Polya {
                     if(mark.Cuts!=null&&(mark.Cuts.Length%5!=0||mark.Cuts.Any(v=>!Finite(v))))
                         throw new FormatException("Некорректная маска стирания.");
                     if(mark.Pressure!=null&&(mark.Points==null||mark.Pressure.Length!=mark.Points.Length/2||mark.Pressure.Any(v=>!Finite(v)||v<.2f||v>1))) mark.Pressure=null;
+                    if(mark.WebInk!=null&&(mark.WebInk.Length>10000||mark.WebInk.Any(line=>line==null||line.Length%2!=0||
+                        line.Any(v=>!Finite(v)||v<0||v>1)))) mark.WebInk=null;
+                    if(mark.BrowserWidth.HasValue&&(!Finite(mark.BrowserWidth.Value)||mark.BrowserWidth<100||mark.BrowserWidth>16000))mark.BrowserWidth=null;
+                    if(mark.BrowserHeight.HasValue&&(!Finite(mark.BrowserHeight.Value)||mark.BrowserHeight<100||mark.BrowserHeight>16000))mark.BrowserHeight=null;
+                    if(mark.BrowserPageZoom.HasValue&&(!(mark.BrowserPageZoom.Value>=.25)||mark.BrowserPageZoom.Value>5))
+                        mark.BrowserPageZoom=null;
+                    if(mark.PageAnnotations!=null) {
+                        mark.PageAnnotations=mark.PageAnnotations.Where(entry=>entry.Key.Length<=8192&&entry.Value!=null&&entry.Value.Length<=10000&&
+                            entry.Value.All(line=>line!=null&&line.Length%2==0&&line.All(v=>Finite(v)&&v>=0&&v<=1)))
+                            .Take(128).ToDictionary(entry=>entry.Key,entry=>entry.Value);
+                    }
+                    if(mark.WebStrokes!=null)
+                        mark.WebStrokes=mark.WebStrokes.Where(entry=>entry.Key.Length<=8192&&entry.Value!=null).Take(128)
+                            .ToDictionary(entry=>entry.Key,entry=>entry.Value.Where(ValidWebStroke).Take(10000).ToArray());
+                    if(mark.WebImage!=null&&mark.WebImage.Length>16*1024*1024)mark.WebImage=null;
                     if(mark.Kind=="graph"&&(!(mark.From<mark.To)||Math.Abs(mark.From)>1e9||Math.Abs(mark.To)>1e9))
                         throw new FormatException("В файле есть график с некорректным диапазоном.");
                     if(mark.Kind=="trig"&&(Double.IsNaN(mark.Angle)||Double.IsInfinity(mark.Angle)))
@@ -95,11 +124,20 @@ namespace Polya {
             doc.Active=Math.Max(0,Math.Min(doc.Active,doc.Boards.Count-1));
             return doc;
         }
+        static bool ValidWebStroke(Mark m) {
+            return m!=null&&(m.Kind=="ink"||m.Kind=="line"||m.Kind=="ellipse")&&Finite(m.X)&&Finite(m.Y)&&Finite(m.W)&&Finite(m.H)&&
+                m.W>=0&&m.H>=0&&m.Size>=1&&m.Size<=30&&
+                (m.Points==null||m.Points.Length%2==0&&m.Points.All(Finite))&&
+                (m.Cuts==null||m.Cuts.Length%5==0&&m.Cuts.All(Finite))&&
+                (m.Pressure==null||m.Points!=null&&m.Pressure.Length==m.Points.Length/2&&m.Pressure.All(v=>v>=.2f&&v<=1));
+        }
         static bool Finite(float value) { return !Single.IsNaN(value)&&!Single.IsInfinity(value)&&Math.Abs(value)<=10000000; }
-        public void Write(string path) {
+        public void Write(string path) {WriteEncoded(path,Encode());}
+        internal string Encode() {GetId();return Serializer().Serialize(this);}
+        internal static void WriteEncoded(string path,string data) {
             string temp=Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path)), ".polya-"+Guid.NewGuid().ToString("N")+".tmp");
             try {
-                File.WriteAllText(temp,Serializer().Serialize(this),new UTF8Encoding(false));
+                File.WriteAllText(temp,data,new UTF8Encoding(false));
                 if(File.Exists(path)) {
                     try { File.Replace(temp,path,null); }
                     catch(IOException) { MoveOver(temp,path); }
@@ -193,6 +231,17 @@ namespace Polya {
     }
 
     sealed class Formula {
+        static double Combinations(double n,double k,bool choose) {
+            if(n<0||k<0||k>n||n>10000||Math.Truncate(n)!=n||Math.Truncate(k)!=k)
+                throw new FormatException("Нужны целые числа: 0 ≤ k ≤ n ≤ 10000");
+            int count=(int)(choose?Math.Min(k,n-k):k);
+            double value=1;
+            for(int i=1;i<=count;i++) {
+                value*=(n-i+1)/(choose?i:1.0);
+                if(Double.IsInfinity(value))break;
+            }
+            return value;
+        }
         readonly string input;
         int pos;
         int nesting;
@@ -270,6 +319,17 @@ namespace Polya {
                     throw new FormatException("Параметр a доступен в редакторе графика.");
             }
             if(!Take('(')) throw new FormatException("Для функции нужны скобки: "+name+"(…).");
+            if(name=="ncr"||name=="npr"||name=="mod"||name=="root") {
+                var a=Sum();
+                if(!Take(';'))throw new FormatException("Разделите аргументы знаком ;");
+                var b=Parenthesized();
+                switch(name) {
+                    case "ncr":return x=>Combinations(a(x),b(x),true);
+                    case "npr":return x=>Combinations(a(x),b(x),false);
+                    case "root":return x=>Math.Pow(b(x),1/a(x));
+                    default:return x=>a(x)%b(x);
+                }
+            }
             var arg=Parenthesized();
             double factor=degrees?Math.PI/180:1;
             switch(name) {
@@ -280,6 +340,12 @@ namespace Polya {
                 case "acos":return x=>Math.Acos(arg(x))/factor;
                 case "atan":return x=>Math.Atan(arg(x))/factor;
                 case "sqrt":return x=>Math.Sqrt(arg(x));
+                case "cbrt":return x=>Math.Sign(arg(x))*Math.Pow(Math.Abs(arg(x)),1.0/3);
+                case "sinh":return x=>Math.Sinh(arg(x));
+                case "cosh":return x=>Math.Cosh(arg(x));
+                case "tanh":return x=>Math.Tanh(arg(x));
+                case "pct":return x=>arg(x)/100;
+                case "round":return x=>Math.Round(arg(x),MidpointRounding.AwayFromZero);
                 case "abs":return x=>Math.Abs(arg(x));
                 case "ln":return x=>Math.Log(arg(x));
                 case "log":return x=>Math.Log10(arg(x));

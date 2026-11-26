@@ -5,15 +5,15 @@ using System.Windows.Forms;
 
 namespace Polya {
     sealed partial class Workspace {
-        const int PointerUpdate=0x245,PointerDown=0x246,PointerUp=0x247,PointerCaptureChanged=0x24c;
-        const int Pen=3,Touch=2,PressureMask=1,Inverted=2,Eraser=4,Canceled=0x8000;
+        internal const int PointerUpdate=0x245,PointerDown=0x246,PointerUp=0x247,PointerCaptureChanged=0x24c;
+        internal const int Pen=3,Touch=2,PressureMask=1,Inverted=2,Eraser=4,Canceled=0x8000;
         uint penId;
         int penPointerTime;
         string beforePenEraser;
         readonly PenInfo[] penHistory=new PenInfo[64];
 
         [StructLayout(LayoutKind.Sequential)]
-        struct PointerInfo {
+        internal struct PointerInfo {
             public int Type;
             public uint Id,Frame,Flags;
             public IntPtr Source,Target;
@@ -26,17 +26,17 @@ namespace Polya {
             public int ButtonChange;
         }
         [StructLayout(LayoutKind.Sequential)]
-        struct PenInfo {
+        internal struct PenInfo {
             public PointerInfo Pointer;
             public uint Flags,Mask,Pressure,Rotation;
             public int TiltX,TiltY;
         }
         [DllImport("user32.dll")]
-        static extern bool GetPointerType(uint id,out int type);
+        internal static extern bool GetPointerType(uint id,out int type);
         [DllImport("user32.dll")]
-        static extern bool GetPointerPenInfo(uint id,out PenInfo info);
+        internal static extern bool GetPointerPenInfo(uint id,out PenInfo info);
         [DllImport("user32.dll")]
-        static extern bool GetPointerPenInfoHistory(uint id,ref uint entries,[Out] PenInfo[] data);
+        internal static extern bool GetPointerPenInfoHistory(uint id,ref uint entries,[Out] PenInfo[] data);
 
         protected override void WndProc(ref Message msg) {
             int type;
@@ -56,16 +56,17 @@ namespace Polya {
                 var location=PointToClient(sample.Pointer.Pixel);
                 if(At(Logical(location))!=null||popup!=null||surface.Dragging)return false;
                 var tool=surface.Tool;
-                bool ink=tool=="pen"||Surface.IsEraser(tool)||(sample.Flags&(Inverted|Eraser))!=0;
+                bool ink=tool=="pen"||Surface.IsEraser(tool)||tablet.EraserEnd&&(sample.Flags&(Inverted|Eraser))!=0;
                 if(!ink)return false;
                 Focus();
                 penId=id;penPointerTime=sample.Pointer.Time;
                 surface.PenContact=true;
-                if((sample.Flags&(Inverted|Eraser))!=0) {beforePenEraser=tool;surface.Tool="eraser";}
+                if(tablet.EraserEnd&&(sample.Flags&(Inverted|Eraser))!=0) {beforePenEraser=tool;surface.Tool="eraser";}
                 StopZoom();
                 UpdatePenForce(sample);
                 pointer=Logical(location);pointerSeen=true;
-                surface.OnDown(pointer,false,false);UpdateCursor();Invalidate();
+                surface.OnDown(pointer,false,false);UpdateCursor();
+                if(surface.Inking)Dirty(R(pointer.X-16,pointer.Y-16,32,32));else Invalidate();
                 return true;
             }
             if(penId==0||id!=penId)return false;
@@ -74,31 +75,32 @@ namespace Polya {
                 EndPen();Invalidate();return true;
             }
             if(message==PointerUpdate) {
+                var dirty=RectangleF.Empty;
                 uint count=(uint)penHistory.Length;
                 if(sample.Pointer.Count>1&&sample.Pointer.Count<=count&&GetPointerPenInfoHistory(id,ref count,penHistory)) {
                     for(int i=(int)count-1;i>=0;i--) {
                         if(penHistory[i].Pointer.Time<penPointerTime)continue;
-                        TrackPen(penHistory[i]);
+                        var sampleDamage=TrackPen(penHistory[i]);
+                        if(!sampleDamage.IsEmpty)dirty=dirty.IsEmpty?sampleDamage:RectangleF.Union(dirty,sampleDamage);
                     }
                 }
-                else TrackPen(sample);
+                else dirty=TrackPen(sample);
+                if(!dirty.IsEmpty)Dirty(dirty);
                 penPointerTime=sample.Pointer.Time;
             } else if(message==PointerUp) {
-                bool erasing=surface.Erasing;int before=surface.Revision;
+                bool inking=surface.Inking;
                 surface.OnUp(Logical(PointToClient(sample.Pointer.Pixel)),false);
-                lastErasure=erasing&&before!=surface.Revision;
-                EndPen();ViewChanged();
+                EndPen();if(!inking)ViewChanged();
             }
             return true;
         }
-        void TrackPen(PenInfo sample) {
+        RectangleF TrackPen(PenInfo sample) {
             UpdatePenForce(sample);
             pointer=Logical(PointToClient(sample.Pointer.Pixel));pointerSeen=true;
-            var changed=surface.Track(pointer,false);
-            if(!changed.IsEmpty)Dirty(changed);
+            return surface.Track(pointer,false);
         }
         void UpdatePenForce(PenInfo sample) {
-            surface.PenPressure=(sample.Mask&PressureMask)==0?1:.25f+.75f*Math.Min(1024,sample.Pressure)/1024f;
+            surface.PenPressure=!tablet.Pressure||(sample.Mask&PressureMask)==0?1:.25f+.75f*Math.Min(1024,sample.Pressure)/1024f;
         }
         void EndPen() {
             if(penId==0)return;

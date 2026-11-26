@@ -13,19 +13,11 @@ namespace Polya {
         ScreenPage page;
         PointF contextAt;
         string librarySubject="math",popup;
-        bool fan;
         int fileOffset,boardOffset;
-        readonly Timer fanTimer=new Timer{Interval=16};
-        float fanProgress;
         public class RecentFile { public string Path {get;set;} public string[] Subjects {get;set;} public DateTime? Opened {get;set;} }
         List<RecentFile> recent=new List<RecentFile>();
         static string RecentPath { get {return Path.Combine(Path.GetDirectoryName(RecoveryPath),"recent.json");} }
         void LoadRecent() {
-            fanTimer.Tick+=(s,e)=>{
-                fanProgress=Math.Max(0,Math.Min(1,fanProgress+(fan ? .16f : -.22f)));
-                if(fanProgress==0||fanProgress==1) fanTimer.Stop();
-                Dirty(R(screenW-270,screenH-345,270,345));
-            };
             if(!recoveryAllowed) return;
             try {
                 if(File.Exists(RecentPath)) recent=new JavaScriptSerializer().Deserialize<List<RecentFile>>(File.ReadAllText(RecentPath))
@@ -43,8 +35,8 @@ namespace Polya {
             } catch(Exception) { Notice("Не удалось обновить список недавних файлов"); }
         }
         void Navigate(ScreenPage next) {
-            StopZoom();CloseCanvasPanel();
-            page=next; popup=null;fan=false;fanProgress=0;fanTimer.Stop(); fileOffset=0;
+            StopZoom();CloseCanvasPanel();CloseBrowser();
+            page=next;popup=null;fileOffset=0;
             Invalidate();
         }
         void TogglePopup(string name) {
@@ -52,7 +44,6 @@ namespace Polya {
             if(popup=="boards") boardOffset=Math.Max(0,doc.Active-3);
             Invalidate();
         }
-        void ToggleFan() {fan=!fan;popup=null;fanTimer.Start();Invalidate();}
         void MarkSettings() {dirty=true;RecordSession();Invalidate();}
         void OpenRecent(RecentFile item) {
             if(!File.Exists(item.Path)) {
@@ -85,7 +76,7 @@ namespace Polya {
                 Art.Circle(g,Art.Muted,pointer.X,pointer.Y,10,1.15f);
             }
             DrawToolOptions(g);
-            DrawFan(g);
+
             DrawLessonClock(g);
             DrawPopup(g);
         }
@@ -94,29 +85,16 @@ namespace Polya {
             Art.Icon(g,icon,r.X+8,r.Y+6,21,active?Art.Purple:disabled?Art.Fade:Art.Ink);
             if(!disabled) Target(r,run,tip);
         }
-        void DrawFan(Graphics g) {
-            float x=screenW-76,y=screenH-76;
-            var main=R(x,y,56,56);
-            Art.Round(g,R(x,y+4,56,56),20,Color.FromArgb(30,36,19,78));
-            Art.Round(g,main,20,Hover(main)?Art.C("#5234BE"):Art.Purple);
-            Art.Icon(g,fan?"close":"spark",x+15,y+15,26,Art.White);
-            Target(main,ToggleFan,"Учебные инструменты");
-            if(fanProgress==0) return;
+        void DrawStudyMenu(Graphics g) {
             var tools=Catalog.Tools(surface.Board.Subject);
+            var r=R(screenW-279,60,265,44+tools.Length*36);
+            PopupBase(g,r,"Учебные инструменты");
             for(int i=0;i<tools.Length;i++) {
-                var tool=tools[i];float top=y-(i+1)*58*(1-(1-fanProgress)*(1-fanProgress));
-                var r=R(x+5,top,46,46);
-                Art.Round(g,r,15,Hover(r)?Art.Pale:Art.White,Art.Line);
-                Art.Icon(g,tool.Icon,r.X+12,r.Y+12,22,Art.Purple);
-                if(fan) Target(r,()=>UseStudy(tool),tool.Name);
-                if(Hover(r)&&fan) {
-                    Art.Round(g,R(x-182,top+5,173,35),10,Art.Dark);
-                    Art.Label(g,tool.Name,x-170,top+5,151,35,13,Art.White,true,StringAlignment.Far);
-                }
+                var tool=tools[i];
+                PopupRow(g,R(r.X+7,r.Y+38+i*36,r.Width-14,34),tool.Icon,tool.Name,()=>UseStudy(tool));
             }
         }
         void UseStudy(Catalog.Group tool) {
-            if(fan) ToggleFan();
             if(tool.Id=="calc") {Calculator();return;}
             if(tool.Id=="book") {Reference();return;}
             if(tool.Id=="graph") {NewWidget("graph");return;}
@@ -145,6 +123,7 @@ namespace Polya {
             if(popup==null) return;
             if(popup=="main") {DrawBoardMenu(g);return;}
             if(popup=="lesson") {DrawLessonPopup(g);return;}
+            if(popup=="study") {DrawStudyMenu(g);return;}
             if(popup=="boards") {
                 int rows=Math.Min(8,doc.Boards.Count);boardOffset=Math.Max(0,Math.Min(boardOffset,doc.Boards.Count-rows));
                 var r=R(screenW-314,60,300,150+rows*33);PopupBase(g,r,"Доски тетради");

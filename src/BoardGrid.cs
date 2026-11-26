@@ -14,6 +14,10 @@ namespace Polya {
         int[] columns=new int[0],rows=new int[0];
         Color palettePaper;
         RasterBlitter.Image image;
+        RectangleF cachedArea;
+        float cachedX,cachedY,cachedSpacing,cachedDpi;
+        int cachedWidth,cachedHeight;
+        Color cachedPaper;
 
         // Line centers retain their fractional position at every zoom. Pixel coverage
         // is shared by adjacent pixels instead of rounding the grid's repeating period.
@@ -35,12 +39,24 @@ namespace Polya {
                 if(left+1>=0&&left+1<size)pixels[left+1]+=(int)Math.Round(alpha*fraction);
             }
         }
-        public void Draw(Graphics g,RectangleF clip,Color paper,float spacing,float x,float y) {
-            var device=new[]{clip.Location,new PointF(clip.Right,clip.Bottom),new PointF(x,y),new PointF(x+spacing,y+spacing)};
+        public void Draw(Graphics g,RectangleF area,RectangleF clip,Color paper,float spacing,float x,float y) {
+            var device=new[]{area.Location,new PointF(area.Right,area.Bottom),new PointF(x,y),new PointF(x+spacing,y+spacing)};
             g.TransformPoints(CoordinateSpace.Device,CoordinateSpace.World,device);
             int left=(int)Math.Round(device[0].X),top=(int)Math.Round(device[0].Y);
             int width=(int)Math.Round(device[1].X)-left,height=(int)Math.Round(device[1].Y)-top;
             if(width<=0||height<=0)return;
+            if(image==null||cachedArea!=area||cachedX!=x||cachedY!=y||cachedSpacing!=spacing||
+                cachedWidth!=width||cachedHeight!=height||cachedPaper!=paper||cachedDpi!=g.DpiX) {
+                Render(left,top,width,height,device,spacing,paper);
+                cachedArea=area;cachedX=x;cachedY=y;cachedSpacing=spacing;cachedWidth=width;cachedHeight=height;cachedPaper=paper;cachedDpi=g.DpiX;
+            }
+            patches.Clear();
+            patches.Add(new RasterBlitter.Patch {Native=image,Bitmap=image.Bitmap,Destination=area,
+                Source=new RectangleF(0,0,width,height),Opaque=true});
+            compositor.Draw(g,patches,clip,RectangleF.Empty);
+            patches.Clear();
+        }
+        void Render(int left,int top,int width,int height,PointF[] device,float spacing,Color paper) {
             float blend=Math.Max(0,Math.Min(1,(spacing-8)/3));
             if(image==null||width>columns.Length||height>rows.Length)Grow(width,height);
             FillAxis(columns,width,device[2].X-left,device[3].X-device[2].X,blend);
@@ -56,11 +72,6 @@ namespace Polya {
                 valid[shade]=true;
             }
             image.WriteRows(colors,rows,width,height);
-            patches.Clear();
-            patches.Add(new RasterBlitter.Patch {Native=image,Bitmap=image.Bitmap,Destination=clip,
-                Source=new RectangleF(0,0,width,height),Opaque=true});
-            compositor.Draw(g,patches,clip,RectangleF.Empty);
-            patches.Clear();
         }
         void Grow(int w,int h) {
             if(image!=null)image.Dispose();

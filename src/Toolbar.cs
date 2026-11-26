@@ -15,8 +15,8 @@ namespace Polya {
             float step=Math.Max(25,Math.Min(37,(screenW-140)/14f));
             float width=step*14+25;
             strip=R((screenW-width)/2,15,width,45);
-            Art.Round(g,R(strip.X,strip.Y+2,strip.Width,strip.Height),11,Color.FromArgb(14,32,32,54));
-            Art.Round(g,strip,11,Art.White,Art.Line);
+            Art.Round(g,R(strip.X,strip.Y+3,strip.Width,strip.Height),13,Color.FromArgb(17,31,28,51));
+            Art.Round(g,strip,13,Art.White,Art.Line);
             Target(strip,()=>{});
             Func<int,RectangleF> slot=index=>R(strip.X+6+index*step+(index>0?6:0),strip.Y+5,step-2,35);
             // The separator keeps the tool lock distinct from drawing modes.
@@ -25,14 +25,15 @@ namespace Polya {
             Art.Stroke(g,Art.Line,1,strip.X+step+8,strip.Y+11,strip.X+step+8,strip.Bottom-11);
             for(int i=0;i<ToolIds.Length;i++) {
                 string id=ToolIds[i];
-                ToolGlyph(g,slot(i+1),id=="pixel"?"pixel":id,ToolNames[i],step>=32?ToolKeys[i]:null,()=>ChooseTool(id),surface.Tool==id);
+                ToolGlyph(g,slot(i+1),id=="pixel"?"pixel":id,ToolNames[i],step>=32?ToolKeys[i]:null,()=>ChooseTool(id,true),surface.Tool==id);
             }
+            Art.Stroke(g,Art.Line,1,slot(13).X-2,strip.Y+12,slot(13).X-2,strip.Bottom-12);
             ToolGlyph(g,slot(13),"more","Дополнительные инструменты",null,()=>TogglePopup("more"),popup=="more"||surface.Tool=="link");
             var options=R(18,77,41,40);
             Button(g,options,"background",null,()=>TogglePopup("background"),"Фон доски",active:popup=="background");
         }
         void ToolGlyph(Graphics g,RectangleF r,string icon,string name,string key,Action action,bool selected) {
-            if(selected||Hover(r)) Art.Round(g,r,8,selected?Art.Pale:Art.Sidebar);
+            if(selected||Hover(r)) Art.Round(g,r,10,selected?Art.C("#E6DDF8"):Art.Sidebar);
             Art.Icon(g,icon,r.X+(r.Width-17)/2,r.Y+7,17,selected?Art.C("#454099"):Art.Ink);
             if(key!=null) Art.Label(g,key,r.Right-11,r.Bottom-12,9,10,8,selected?Art.Purple:Art.Fade,false,StringAlignment.Center);
             Target(r,action,name);
@@ -162,11 +163,13 @@ namespace Polya {
         }
         void DrawToolPopup(Graphics g) {
             if(popup=="more") {
-                var more=R(strip.Right-275,strip.Bottom+7,275,155);
-                PopupBase(g,more,"Дополнительные инструменты");
-                PopupRow(g,R(more.X+7,more.Y+38,261,33),"link","Ссылка · K",()=>ChooseTool("link"));
-                PopupRow(g,R(more.X+7,more.Y+74,261,33),"spark","Ровные фигуры  "+(surface.Tidy?"✓":"○"),ToggleTidy,true);
-                PopupRow(g,R(more.X+7,more.Y+110,261,33),"image","Вставить изображение",AddWorksheet);
+                var more=R(strip.Right-274,strip.Bottom+9,274,220);
+                PopupBase(g,more,"На доску");
+                PopupRow(g,R(more.X+7,more.Y+38,261,32),"image","Вставить изображение · ⇧9",AddWorksheet);
+                PopupRow(g,R(more.X+7,more.Y+73,261,32),"frame","Добавить кадр · F",AddFrame);
+                PopupRow(g,R(more.X+7,more.Y+108,261,32),"link","Встроенная страница",OpenPageEntry);
+                PopupRow(g,R(more.X+7,more.Y+143,261,32),"spark","Ровные контуры · ⇧X  "+(surface.Tidy?"✓":"○"),ToggleTidy,true);
+                PopupRow(g,R(more.X+7,more.Y+178,261,32),"laser","Лазерная указка · G",()=>ChooseTool("laser",true));
                 return;
             }
             if(popup!="background"&&popup!="main"&&popup!="boards") return;
